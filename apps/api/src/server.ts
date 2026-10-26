@@ -8,6 +8,8 @@ import {
   Transaction as SharedTransaction
 } from '@organizador/shared';
 
+import transactionRouter from './routes/transactions';
+
 // Instância do Prisma Client
 export const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
@@ -33,62 +35,9 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json(response);
 });
 
-// Rotas de Transações (Prontas para expansão)
-app.get('/api/transactions', async (_req: Request, res: Response) => {
-  try {
-    const transactions = await prisma.transaction.findMany({
-      orderBy: { date: 'desc' },
-    });
-
-    const response: ApiResponse<typeof transactions> = {
-      success: true,
-      data: transactions,
-    };
-    res.json(response);
-  } catch (error) {
-    const response: ApiResponse = {
-      success: false,
-      message: 'Erro ao buscar transações.',
-      errors: [error instanceof Error ? error.message : 'Erro interno desconhecido'],
-    };
-    res.status(500).json(response);
-  }
-});
-
-app.post('/api/transactions', async (req: Request, res: Response) => {
-  try {
-    const payload = req.body as CreateTransactionDTO;
-
-    const transaction = await prisma.transaction.create({
-      data: {
-        type: payload.type,
-        category: payload.category,
-        amount: payload.amount,
-        description: payload.description,
-        date: new Date(payload.date),
-        currentInstallment: payload.currentInstallment,
-        totalInstallments: payload.totalInstallments,
-        groupId: payload.groupId,
-        status: payload.status || 'pending',
-        paymentDate: payload.paymentDate ? new Date(payload.paymentDate) : null,
-      },
-    });
-
-    const response: ApiResponse<typeof transaction> = {
-      success: true,
-      data: transaction,
-      message: 'Transação criada com sucesso.',
-    };
-    res.status(201).json(response);
-  } catch (error) {
-    const response: ApiResponse = {
-      success: false,
-      message: 'Erro ao criar transação.',
-      errors: [error instanceof Error ? error.message : 'Erro interno desconhecido'],
-    };
-    res.status(400).json(response);
-  }
-});
+// Rotas de Transações
+app.use('/transactions', transactionRouter);
+app.use('/api/transactions', transactionRouter);
 
 // Inicialização do servidor
 const server = app.listen(PORT, () => {
