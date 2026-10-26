@@ -1,0 +1,33 @@
+// Prisma Schema para o Organizador de Dívidas
+// Documentação: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Transaction {
+  id                 String    @id @default(uuid())
+  type               String    // 'income' | 'expense'
+  category           String    // 'fixed' | 'recurring' | 'installment' | 'daily'
+  amount             Float
+  description        String
+  date               DateTime
+  currentInstallment Int?
+  totalInstallments  Int?
+  groupId            String?   // UUID que agrupa todas as parcelas da mesma dívida/compra
+  status             String    @default("pending") // 'pending' | 'paid' | 'overdue'
+  paymentDate        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([date])
+  @@index([groupId])
+  @@index([category])
+  @@index([type])
+  @@map("transactions")
+}

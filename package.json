@@ -1,0 +1,24 @@
+{
+  "name": "organizador-dividas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monorepo para o sistema de Organizador de Dívidas e Finanças Pessoais",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev": "npm run dev --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present"
+  },
+  "keywords": [
+    "monorepo",
+    "financas",
+    "workspaces",
+    "typescript"
+  ],
+  "author": "",
+  "license": "ISC"
+}
