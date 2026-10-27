@@ -8,9 +8,12 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "concurrently -n \"API,WEB\" -c \"cyan,magenta\" \"npm run dev -w @organizador/api\" \"npm run dev -w @organizador/web\"",
+    "dev:all": "concurrently -n \"SHARED,API,WEB\" -c \"yellow,cyan,magenta\" \"npm run dev -w @organizador/shared\" \"npm run dev -w @organizador/api\" \"npm run dev -w @organizador/web\"",
+    "dev:api": "npm run dev -w @organizador/api",
+    "dev:web": "npm run dev -w @organizador/web",
+    "dev:shared": "npm run dev -w @organizador/shared",
     "build": "npm run build --workspaces --if-present",
-    "dev": "npm run dev --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
     "clean": "npm run clean --workspaces --if-present"
   },
   "keywords": [
@@ -20,5 +23,8 @@
     "typescript"
   ],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
 }
