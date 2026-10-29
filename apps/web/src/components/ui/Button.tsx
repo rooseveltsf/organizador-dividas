@@ -1,7 +1,7 @@
 import React from 'react';
 import { cva, type RecipeVariantProps } from '@/styled-system/css';
 
-export const buttonRecipe = cva({
+const buttonRecipe = cva({
   base: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -61,6 +61,22 @@ export const buttonRecipe = cva({
         },
         _active: {
           bg: 'slate.200',
+        },
+      },
+      outline: {
+        bg: 'white',
+        color: 'slate.700',
+        borderWidth: '1px',
+        borderStyle: 'solid',
+        borderColor: 'slate.300',
+        boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+        _hover: {
+          bg: 'slate.50',
+          borderColor: 'slate.400',
+          color: 'slate.900',
+        },
+        _active: {
+          bg: 'slate.100',
         },
       },
     },

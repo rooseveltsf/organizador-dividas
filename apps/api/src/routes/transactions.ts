@@ -5,15 +5,35 @@ const router = Router();
 
 /**
  * GET /transactions
- * Query params opcionais: ?month=10&year=2026
+ * Query params opcionais: ?month=10&year=2026&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
  */
 router.get('/', TransactionController.list);
 
 /**
  * POST /transactions
- * Criação com suporte a parcelas automáticas se category === 'installment'
+ * Criação com validação Zod e suporte a:
+ * - parcelas automáticas se category === 'installment'
+ * - projeções fixas e recorrentes por repeatMonths se category === 'fixed' | 'recurring'
  */
 router.post('/', TransactionController.create);
+
+/**
+ * PATCH /transactions/:id/status
+ * Alterna status entre 'pending' e 'paid' (ou define status enviado) com auto-preenchimento de paymentDate
+ */
+router.patch('/:id/status', TransactionController.updateStatus);
+
+/**
+ * PUT /transactions/:id
+ * Atualização dos dados da transação com UpdateTransactionDTO
+ */
+router.put('/:id', TransactionController.update);
+
+/**
+ * PATCH /transactions/:id
+ * Atualização parcial dos dados da transação
+ */
+router.patch('/:id', TransactionController.update);
 
 /**
  * DELETE /transactions/:id

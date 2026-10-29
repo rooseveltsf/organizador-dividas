@@ -10,10 +10,8 @@ import {
 
 import transactionRouter from './routes/transactions';
 
-// Instância do Prisma Client
-export const prisma = new PrismaClient({
-  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-});
+import { prisma } from './prisma';
+export { prisma };
 
 const app = express();
 const PORT = process.env.PORT || 3000;

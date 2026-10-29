@@ -1,7 +1,7 @@
 import React from 'react';
-import { cva, type RecipeVariantProps } from '@/styled-system/css';
+import { css, cva, cx, type RecipeVariantProps } from '@/styled-system/css';
 
-export const cardRecipe = cva({
+const cardRecipe = cva({
   base: {
     display: 'flex',
     flexDirection: 'column',
@@ -66,7 +66,7 @@ export const Card = React.forwardRef<HTMLDivElement, CardProps>(
     return (
       <div
         ref={ref}
-        className={`${cardRecipe({ variant, padding })} ${className || ''}`.trim()}
+        className={cx(cardRecipe({ variant, padding }), className)}
         {...props}
       >
         {children}
@@ -77,89 +77,99 @@ export const Card = React.forwardRef<HTMLDivElement, CardProps>(
 
 Card.displayName = 'Card';
 
-export const CardHeader: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
-  children,
-  className,
-  ...props
-}) => (
-  <div
-    style={{
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '0.375rem',
-      marginBottom: '1rem',
-    }}
-    className={className}
-    {...props}
-  >
-    {children}
-  </div>
-);
+const cardHeaderStyle = css({
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '1.5',
+  marginBottom: '4',
+});
 
-export const CardTitle: React.FC<React.HTMLAttributes<HTMLHeadingElement>> = ({
-  children,
-  className,
-  ...props
-}) => (
-  <h3
-    style={{
-      fontSize: '1.125rem',
-      fontWeight: 600,
-      color: '#0f172a',
-      lineHeight: 1.3,
-      margin: 0,
-    }}
-    className={className}
-    {...props}
-  >
-    {children}
-  </h3>
+export const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+  ({ children, className, ...props }, ref) => (
+    <div
+      ref={ref}
+      className={cx(cardHeaderStyle, className)}
+      {...props}
+    >
+      {children}
+    </div>
+  )
 );
+CardHeader.displayName = 'CardHeader';
 
-export const CardDescription: React.FC<React.HTMLAttributes<HTMLParagraphElement>> = ({
-  children,
-  className,
-  ...props
-}) => (
-  <p
-    style={{
-      fontSize: '0.875rem',
-      color: '#64748b',
-      margin: 0,
-    }}
-    className={className}
-    {...props}
-  >
-    {children}
-  </p>
-);
+const cardTitleStyle = css({
+  fontSize: 'lg',
+  fontWeight: 'semibold',
+  color: 'slate.900',
+  lineHeight: '1.3',
+  margin: '0',
+});
 
-export const CardContent: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
-  children,
-  className,
-  ...props
-}) => (
-  <div style={{ flex: 1 }} className={className} {...props}>
-    {children}
-  </div>
+export const CardTitle = React.forwardRef<HTMLHeadingElement, React.HTMLAttributes<HTMLHeadingElement>>(
+  ({ children, className, ...props }, ref) => (
+    <h3
+      ref={ref}
+      className={cx(cardTitleStyle, className)}
+      {...props}
+    >
+      {children}
+    </h3>
+  )
 );
+CardTitle.displayName = 'CardTitle';
 
-export const CardFooter: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
-  children,
-  className,
-  ...props
-}) => (
-  <div
-    style={{
-      display: 'flex',
-      alignItems: 'center',
-      marginTop: '1.25rem',
-      paddingTop: '0.75rem',
-      borderTop: '1px solid #f1f5f9',
-    }}
-    className={className}
-    {...props}
-  >
-    {children}
-  </div>
+const cardDescriptionStyle = css({
+  fontSize: 'sm',
+  color: 'slate.500',
+  margin: '0',
+});
+
+export const CardDescription = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(
+  ({ children, className, ...props }, ref) => (
+    <p
+      ref={ref}
+      className={cx(cardDescriptionStyle, className)}
+      {...props}
+    >
+      {children}
+    </p>
+  )
 );
+CardDescription.displayName = 'CardDescription';
+
+const cardContentStyle = css({
+  flex: '1',
+});
+
+export const CardContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+  ({ children, className, ...props }, ref) => (
+    <div ref={ref} className={cx(cardContentStyle, className)} {...props}>
+      {children}
+    </div>
+  )
+);
+CardContent.displayName = 'CardContent';
+
+const cardFooterStyle = css({
+  display: 'flex',
+  alignItems: 'center',
+  marginTop: '5',
+  paddingTop: '3',
+  borderTopWidth: '1px',
+  borderTopStyle: 'solid',
+  borderTopColor: 'slate.100',
+});
+
+export const CardFooter = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+  ({ children, className, ...props }, ref) => (
+    <div
+      ref={ref}
+      className={cx(cardFooterStyle, className)}
+      {...props}
+    >
+      {children}
+    </div>
+  )
+);
+CardFooter.displayName = 'CardFooter';
+

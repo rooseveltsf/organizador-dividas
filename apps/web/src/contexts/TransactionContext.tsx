@@ -1,5 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import type { Transaction, CreateTransactionDTO, ApiResponse } from '@organizador/shared';
+import type {
+  Transaction,
+  CreateTransactionDTO,
+  UpdateTransactionDTO,
+  PaymentStatus,
+  ApiResponse,
+} from '@organizador/shared';
 
 const API_BASE_URL = 'http://localhost:3000';
 
@@ -13,6 +19,8 @@ export interface TransactionContextData {
   setSelectedDate: (month: number, year: number) => void;
   fetchTransactions: (month?: number, year?: number) => Promise<void>;
   addTransaction: (data: CreateTransactionDTO) => Promise<void>;
+  updateTransaction: (id: string, data: UpdateTransactionDTO) => Promise<void>;
+  toggleTransactionStatus: (id: string, newStatus?: PaymentStatus) => Promise<void>;
   deleteTransaction: (id: string, deleteAllGroup?: boolean) => Promise<void>;
 }
 
@@ -95,6 +103,64 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
     [fetchTransactions, selectedMonth, selectedYear]
   );
 
+  const updateTransaction = useCallback(
+    async (id: string, data: UpdateTransactionDTO) => {
+      setIsLoading(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/transactions/${id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data),
+        });
+
+        if (!response.ok) {
+          const errorData: ApiResponse = await response.json().catch(() => ({ success: false }));
+          throw new Error(errorData.message || `Erro ao atualizar transação: ${response.statusText}`);
+        }
+
+        // Após o sucesso, recarrega automaticamente as transações
+        await fetchTransactions(selectedMonth, selectedYear);
+      } catch (error) {
+        console.error('Erro ao atualizar transação:', error);
+        throw error;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [fetchTransactions, selectedMonth, selectedYear]
+  );
+
+  const toggleTransactionStatus = useCallback(
+    async (id: string, newStatus?: PaymentStatus) => {
+      setIsLoading(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/transactions/${id}/status`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(newStatus ? { status: newStatus } : {}),
+        });
+
+        if (!response.ok) {
+          const errorData: ApiResponse = await response.json().catch(() => ({ success: false }));
+          throw new Error(errorData.message || `Erro ao atualizar status: ${response.statusText}`);
+        }
+
+        // Após o sucesso, recarrega automaticamente as transações
+        await fetchTransactions(selectedMonth, selectedYear);
+      } catch (error) {
+        console.error('Erro ao atualizar status da transação:', error);
+        throw error;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [fetchTransactions, selectedMonth, selectedYear]
+  );
+
   const deleteTransaction = useCallback(
     async (id: string, deleteAllGroup: boolean = false) => {
       setIsLoading(true);
@@ -138,6 +204,8 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
         setSelectedDate,
         fetchTransactions,
         addTransaction,
+        updateTransaction,
+        toggleTransactionStatus,
         deleteTransaction,
       }}
     >

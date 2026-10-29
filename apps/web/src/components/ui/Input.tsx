@@ -1,7 +1,7 @@
 import React from 'react';
-import { cva, type RecipeVariantProps } from '@/styled-system/css';
+import { css, cva, cx, type RecipeVariantProps } from '@/styled-system/css';
 
-export const inputRecipe = cva({
+const inputRecipe = cva({
   base: {
     display: 'block',
     width: '100%',
@@ -78,32 +78,48 @@ export type InputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size
     label?: string;
   };
 
+const inputContainerStyle = css({
+  width: '100%',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '1.5',
+});
+
+const inputLabelStyle = css({
+  fontSize: 'sm',
+  fontWeight: 'medium',
+  color: 'slate.700',
+});
+
+const inputErrorMessageStyle = css({
+  fontSize: 'xs',
+  color: 'expense.500',
+  fontWeight: 'medium',
+});
+
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
   ({ className, hasError, size, errorMessage, label, id, ...props }, ref) => {
     const isError = Boolean(hasError || errorMessage);
+    const autoId = React.useId();
+    const inputId = id || autoId;
 
     return (
-      <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+      <div className={inputContainerStyle}>
         {label && (
-          <label
-            htmlFor={id}
-            style={{
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: '#334155',
-            }}
-          >
+          <label htmlFor={inputId} className={inputLabelStyle}>
             {label}
           </label>
         )}
         <input
           ref={ref}
-          id={id}
-          className={`${inputRecipe({ hasError: isError, size })} ${className || ''}`.trim()}
+          id={inputId}
+          className={cx(inputRecipe({ hasError: isError, size }), className)}
+          aria-invalid={isError ? true : undefined}
+          aria-errormessage={isError && errorMessage ? `${inputId}-error` : undefined}
           {...props}
         />
         {errorMessage && (
-          <span style={{ fontSize: '0.75rem', color: '#ef4444', fontWeight: 500 }}>
+          <span id={`${inputId}-error`} role="alert" className={inputErrorMessageStyle}>
             {errorMessage}
           </span>
         )}
@@ -113,3 +129,4 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
 );
 
 Input.displayName = 'Input';
+
