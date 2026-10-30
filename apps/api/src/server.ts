@@ -1,14 +1,12 @@
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import { PrismaClient } from '@prisma/client';
 import {
   ApiResponse,
-  CreateTransactionDTO,
-  Transaction as SharedTransaction
 } from '@organizador/shared';
 
 import transactionRouter from './routes/transactions';
+import profileRouter from './routes/profiles';
 
 import { prisma } from './prisma';
 export { prisma };
@@ -36,6 +34,10 @@ app.get('/health', (_req: Request, res: Response) => {
 // Rotas de Transações
 app.use('/transactions', transactionRouter);
 app.use('/api/transactions', transactionRouter);
+
+// Rotas de Perfis de Usuário
+app.use('/profiles', profileRouter);
+app.use('/api/profiles', profileRouter);
 
 // Inicialização do servidor
 const server = app.listen(PORT, () => {

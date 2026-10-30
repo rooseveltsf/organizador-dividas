@@ -255,7 +255,11 @@ export const payslipExtractedItemSchema = z.object({
 export const batchCreateTransactionSchema = z.object({
   profileId: z.string().min(1, 'O profileId é obrigatório'),
   repeatMonths: z.coerce.number().int().min(1).optional(),
-  transactions: z.array(createTransactionSchema.omit({ profileId: true })),
+  transactions: z.array(
+    createTransactionSchema.omit({ profileId: true }).extend({
+      repeatMonths: z.coerce.number().int().min(1).optional(),
+    })
+  ),
 });
 
 export type CreateProfileInput = z.infer<typeof createProfileSchema>;

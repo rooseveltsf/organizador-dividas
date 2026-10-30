@@ -5,12 +5,14 @@ import {
   ApiResponse,
   CreateTransactionDTO,
   UpdateTransactionDTO,
+  BatchCreateTransactionDTO,
   PaymentStatus,
   TransactionType,
   TransactionCategory,
   createTransactionSchema,
   updateTransactionSchema,
   updateStatusSchema,
+  batchCreateTransactionSchema,
 } from '@organizador/shared';
 
 /**
@@ -69,11 +71,37 @@ export function addMonths(date: Date, months: number): Date {
 export class TransactionController {
   /**
    * 1. GET /transactions
-   * Retorna as transações com suporte a filtros por mês/ano ou intervalo startDate/endDate.
+   * Retorna as transações exigindo obrigatoriamente "profileId" e aplicando filtros por data/mês.
    */
   public static async list(req: Request, res: Response): Promise<void> {
     try {
-      const { month, year, startDate, endDate, type, category, status, groupId, search } = req.query;
+      const { profileId, month, year, startDate, endDate, type, category, status, groupId, search } = req.query;
+
+      // Validação estrita: profileId é obrigatório
+      if (!profileId || typeof profileId !== 'string' || !profileId.trim()) {
+        const badRequest: ApiResponse = {
+          success: false,
+          message: 'O parâmetro de consulta "profileId" é obrigatório para listar transações.',
+        };
+        res.status(400).json(badRequest);
+        return;
+      }
+
+      const cleanProfileId = profileId.trim();
+
+      // Verifica se o perfil existe
+      const profile = await prisma.profile.findUnique({
+        where: { id: cleanProfileId },
+      });
+
+      if (!profile) {
+        const notFound: ApiResponse = {
+          success: false,
+          message: `Perfil com ID "${cleanProfileId}" não encontrado.`,
+        };
+        res.status(404).json(notFound);
+        return;
+      }
 
       let dateFilter: { gte?: Date; lte?: Date } | undefined;
 
@@ -143,15 +171,18 @@ export class TransactionController {
         };
       }
 
-      // Montagem dos filtros adicionais
+      // Montagem da query isolada por profileId
       const where: {
+        profileId: string;
         date?: { gte?: Date; lte?: Date };
         type?: TransactionType;
         category?: TransactionCategory;
         status?: PaymentStatus;
         groupId?: string;
         description?: { contains: string };
-      } = {};
+      } = {
+        profileId: cleanProfileId,
+      };
 
       if (dateFilter) where.date = dateFilter;
       if (type) where.type = type as TransactionType;
@@ -182,14 +213,14 @@ export class TransactionController {
 
   /**
    * 2. POST /transactions
-   * Cria transação com validação Zod, arredondamento a 2 casas e regras de negócio:
-   * - 'installment': Gera parcelas para os meses subsequentes vinculadas por groupId.
-   * - 'fixed' ou 'recurring': Projeta registros para repeatMonths (padrão 12) vinculados por groupId.
-   * - 'daily' (ou outras): Gera registro único.
+   * Cria transação vinculada ao profileId obrigatório com suporte a:
+   * - 'installment': Gera parcelas para os meses subsequentes vinculadas por groupId e profileId.
+   * - 'fixed' ou 'recurring': Projeta registros para repeatMonths vinculados por groupId e profileId.
+   * - 'daily': Gera registro individual para o perfil.
    */
   public static async create(req: Request, res: Response): Promise<void> {
     try {
-      // Validação Zod do body
+      // Validação Zod do body (exige profileId)
       const parseResult = createTransactionSchema.safeParse(req.body);
       if (!parseResult.success) {
         const badRequest: ApiResponse = {
@@ -202,6 +233,20 @@ export class TransactionController {
       }
 
       const payload = parseResult.data;
+
+      // Valida se o perfil existe
+      const profile = await prisma.profile.findUnique({
+        where: { id: payload.profileId },
+      });
+
+      if (!profile) {
+        const notFound: ApiResponse = {
+          success: false,
+          message: `Perfil com ID "${payload.profileId}" não encontrado.`,
+        };
+        res.status(404).json(notFound);
+        return;
+      }
 
       // Conversão segura da data base com proteção de timezone
       let baseDate: Date;
@@ -244,6 +289,7 @@ export class TransactionController {
 
           transactionsToCreate.push({
             id: randomUUID(),
+            profileId: payload.profileId,
             type: payload.type,
             category: payload.category,
             amount: payload.amount,
@@ -265,7 +311,7 @@ export class TransactionController {
 
         const response: ApiResponse<{ groupId: string; count: number; items: typeof transactionsToCreate }> = {
           success: true,
-          message: `${transactionsToCreate.length} parcelas geradas com sucesso.`,
+          message: `${transactionsToCreate.length} parcelas geradas com sucesso para o perfil.`,
           data: {
             groupId,
             count: transactionsToCreate.length,
@@ -277,7 +323,6 @@ export class TransactionController {
       }
 
       // REGRA 2: Categorias 'fixed' (Fixas) e 'recurring' (Recorrentes)
-      // Gera projeção mensal vinculada por groupId (padrão 12 meses ou valor de repeatMonths)
       if (payload.category === 'fixed' || payload.category === 'recurring') {
         const repeatCount = payload.repeatMonths ?? 12;
         const groupId = payload.groupId || randomUUID();
@@ -289,6 +334,7 @@ export class TransactionController {
 
           transactionsToCreate.push({
             id: randomUUID(),
+            profileId: payload.profileId,
             type: payload.type,
             category: payload.category,
             amount: payload.amount,
@@ -321,10 +367,11 @@ export class TransactionController {
         return;
       }
 
-      // REGRA 3: Demais categorias (ex: 'daily' / despesas cotidianas ou avulsas)
+      // REGRA 3: Demais categorias ('daily' / avulsas)
       const isPaid = payload.status === 'paid';
       const singleTransaction = await prisma.transaction.create({
         data: {
+          profileId: payload.profileId,
           type: payload.type,
           category: payload.category,
           amount: payload.amount,
@@ -357,7 +404,177 @@ export class TransactionController {
   }
 
   /**
-   * 3. PUT /transactions/:id
+   * 3. POST /transactions/batch
+   * Criação em lote de múltiplas receitas e despesas vinculadas a um perfil (ex: importação de contracheque),
+   * executada atomicamente via prisma.$transaction e projetando meses futuros caso repeatMonths seja informado.
+   */
+  public static async batchCreate(req: Request, res: Response): Promise<void> {
+    try {
+      const parseResult = batchCreateTransactionSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        const badRequest: ApiResponse = {
+          success: false,
+          message: 'Dados inválidos para criação em lote de transações.',
+          errors: parseResult.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        };
+        res.status(400).json(badRequest);
+        return;
+      }
+
+      const payload = parseResult.data;
+
+      // Valida se o perfil existe
+      const profile = await prisma.profile.findUnique({
+        where: { id: payload.profileId },
+      });
+
+      if (!profile) {
+        const notFound: ApiResponse = {
+          success: false,
+          message: `Perfil com ID "${payload.profileId}" não encontrado.`,
+        };
+        res.status(404).json(notFound);
+        return;
+      }
+
+      if (payload.transactions.length === 0) {
+        const badRequest: ApiResponse = {
+          success: false,
+          message: 'Nenhuma transação foi informada para criação em lote.',
+        };
+        res.status(400).json(badRequest);
+        return;
+      }
+
+      const recordsToCreate = [];
+
+      for (const item of payload.transactions) {
+        let baseDate: Date;
+        try {
+          baseDate = parseLocalDate(item.date);
+        } catch (err) {
+          res.status(400).json({
+            success: false,
+            message: `Data inválida "${item.date}" para o item "${item.description}".`,
+          });
+          return;
+        }
+
+        // Projeção mensal para categorias fixed / recurring caso repeatMonths seja informado
+        if (item.category === 'fixed' || item.category === 'recurring') {
+          const repeatCount = payload.repeatMonths ?? item.repeatMonths ?? 1;
+
+          if (repeatCount > 1) {
+            const groupId = item.groupId || randomUUID();
+            for (let i = 0; i < repeatCount; i++) {
+              const txDate = addMonths(baseDate, i);
+              const isFirst = i === 0;
+
+              recordsToCreate.push({
+                id: randomUUID(),
+                profileId: payload.profileId,
+                type: item.type,
+                category: item.category,
+                amount: item.amount,
+                description: item.description,
+                date: txDate,
+                currentInstallment: null,
+                totalInstallments: null,
+                groupId: groupId,
+                status: isFirst ? item.status : 'pending',
+                paymentDate: isFirst && item.status === 'paid'
+                  ? (item.paymentDate ? parseLocalDate(item.paymentDate) : txDate)
+                  : null,
+              });
+            }
+            continue;
+          }
+        }
+
+        // Parcelamentos caso especificados
+        if (item.category === 'installment') {
+          const totalInstallments = Number(item.totalInstallments) || 1;
+          if (totalInstallments > 1) {
+            const groupId = item.groupId || randomUUID();
+            const startInstallment = Number(item.currentInstallment) || 1;
+            const installmentsToGenerate =
+              startInstallment > 1 && totalInstallments >= startInstallment
+                ? totalInstallments - startInstallment + 1
+                : totalInstallments;
+
+            for (let i = 0; i < installmentsToGenerate; i++) {
+              const installmentNumber = startInstallment + i;
+              const installmentDate = addMonths(baseDate, i);
+              const isFirst = i === 0;
+
+              recordsToCreate.push({
+                id: randomUUID(),
+                profileId: payload.profileId,
+                type: item.type,
+                category: item.category,
+                amount: item.amount,
+                description: item.description,
+                date: installmentDate,
+                currentInstallment: installmentNumber,
+                totalInstallments: totalInstallments,
+                groupId: groupId,
+                status: isFirst ? item.status : 'pending',
+                paymentDate: isFirst && item.status === 'paid'
+                  ? (item.paymentDate ? parseLocalDate(item.paymentDate) : installmentDate)
+                  : null,
+              });
+            }
+            continue;
+          }
+        }
+
+        // Item avulso padrão
+        const isPaid = item.status === 'paid';
+        recordsToCreate.push({
+          id: randomUUID(),
+          profileId: payload.profileId,
+          type: item.type,
+          category: item.category,
+          amount: item.amount,
+          description: item.description,
+          date: baseDate,
+          currentInstallment: item.currentInstallment ?? null,
+          totalInstallments: item.totalInstallments ?? null,
+          groupId: item.groupId ?? null,
+          status: item.status,
+          paymentDate: isPaid
+            ? (item.paymentDate ? parseLocalDate(item.paymentDate) : baseDate)
+            : null,
+        });
+      }
+
+      // Execução atômica no banco de dados
+      await prisma.$transaction(
+        recordsToCreate.map((data) => prisma.transaction.create({ data }))
+      );
+
+      const response: ApiResponse<{ totalCreated: number; profileId: string; items: typeof recordsToCreate }> = {
+        success: true,
+        message: `${recordsToCreate.length} transações criadas em lote com sucesso para o perfil.`,
+        data: {
+          totalCreated: recordsToCreate.length,
+          profileId: payload.profileId,
+          items: recordsToCreate,
+        },
+      };
+      res.status(201).json(response);
+    } catch (error) {
+      const response: ApiResponse = {
+        success: false,
+        message: 'Erro ao processar criação em lote de transações.',
+        errors: [error instanceof Error ? error.message : 'Erro interno'],
+      };
+      res.status(500).json(response);
+    }
+  }
+
+  /**
+   * 4. PUT /transactions/:id
    * Atualiza os dados de uma transação existente com validação Zod (UpdateTransactionDTO).
    */
   public static async update(req: Request, res: Response): Promise<void> {
@@ -389,7 +606,23 @@ export class TransactionController {
       }
 
       const payload = parseResult.data;
+
+      // Se profileId foi enviado, verificar se o perfil de destino existe
+      if (payload.profileId) {
+        const profileExists = await prisma.profile.findUnique({
+          where: { id: payload.profileId },
+        });
+        if (!profileExists) {
+          res.status(404).json({
+            success: false,
+            message: `Perfil com ID "${payload.profileId}" não encontrado.`,
+          });
+          return;
+        }
+      }
+
       const updateData: {
+        profileId?: string;
         description?: string;
         amount?: number;
         date?: Date;
@@ -402,6 +635,7 @@ export class TransactionController {
         groupId?: string | null;
       } = {};
 
+      if (payload.profileId !== undefined) updateData.profileId = payload.profileId;
       if (payload.description !== undefined) updateData.description = payload.description;
       if (payload.amount !== undefined) updateData.amount = payload.amount;
       if (payload.category !== undefined) updateData.category = payload.category;
@@ -462,7 +696,7 @@ export class TransactionController {
   }
 
   /**
-   * 4. PATCH /transactions/:id/status
+   * 5. PATCH /transactions/:id/status
    * Alterna o status entre 'pending' e 'paid' (ou define status especificado),
    * preenchendo automaticamente paymentDate quando 'paid' e limpando quando 'pending'.
    */
@@ -539,7 +773,7 @@ export class TransactionController {
   }
 
   /**
-   * 5. DELETE /transactions/:id
+   * 6. DELETE /transactions/:id
    * Exclui transação individual ou todas as parcelas/recorrências futuras se ?deleteAll=true e groupId existir.
    */
   public static async delete(req: Request, res: Response): Promise<void> {
