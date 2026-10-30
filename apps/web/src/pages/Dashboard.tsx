@@ -209,10 +209,10 @@ const statValueStyle = (colorType?: 'income' | 'expense' | 'warning' | 'neutral'
       colorType === 'income'
         ? 'income.700'
         : colorType === 'expense'
-        ? 'expense.700'
-        : colorType === 'warning'
-        ? 'warning.600'
-        : 'slate.700',
+          ? 'expense.700'
+          : colorType === 'warning'
+            ? 'warning.600'
+            : 'slate.700',
   });
 
 const filterBarContainerStyle = css({
@@ -938,8 +938,8 @@ export const Dashboard: React.FC = () => {
                               ? 'Marcar como a receber'
                               : 'Marcar como recebido'
                             : isPaid
-                            ? 'Marcar como pendente'
-                            : 'Marcar como pago'
+                              ? 'Marcar como pendente'
+                              : 'Marcar como pago'
                         }
                         aria-label={
                           isIncome
@@ -947,8 +947,8 @@ export const Dashboard: React.FC = () => {
                               ? 'Marcar como a receber'
                               : 'Marcar como recebido'
                             : isPaid
-                            ? 'Marcar como pendente'
-                            : 'Marcar como pago'
+                              ? 'Marcar como pendente'
+                              : 'Marcar como pago'
                         }
                       >
                         {isPaid ? <CheckCircle2 size={20} /> : <Circle size={20} />}

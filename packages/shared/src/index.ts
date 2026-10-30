@@ -3,10 +3,6 @@
  * Contratos de dados, tipos e interfaces compartilhados entre API e Frontend.
  */
 
-// ============================================================================
-// Tipos Fundamentais de Transação
-// ============================================================================
-
 import { z } from 'zod';
 
 // ============================================================================
@@ -24,12 +20,51 @@ export type TransactionCategory =
 export type PaymentStatus = 'pending' | 'paid' | 'overdue';
 
 // ============================================================================
+// Entidade e DTOs de Perfil de Usuário
+// ============================================================================
+
+export interface Profile {
+  /** Identificador único do perfil (UUID) */
+  id: string;
+
+  /** Nome do titular do perfil */
+  name: string;
+
+  /** Iniciais para renderização em avatares (ex: "RS", "JD") */
+  avatarInitials: string;
+
+  /** Cor primária do perfil em hexadecimal (ex: "#6366F1") */
+  primaryColor: string;
+
+  /** Cor secundária do perfil em hexadecimal para gradientes e destaques (ex: "#EC4899") */
+  secondaryColor: string;
+
+  /** Data de criação em formato ISO 8601 */
+  createdAt: string;
+
+  /** Data da última atualização em formato ISO 8601 */
+  updatedAt: string;
+}
+
+export interface CreateProfileDTO {
+  name: string;
+  primaryColor: string;
+  secondaryColor: string;
+  avatarInitials?: string;
+}
+
+export type UpdateProfileDTO = Partial<CreateProfileDTO>;
+
+// ============================================================================
 // Entidade Principal: Transaction
 // ============================================================================
 
 export interface Transaction {
   /** Identificador único da transação (UUID) */
   id: string;
+
+  /** Identificador do perfil ao qual a transação pertence (UUID) */
+  profileId: string;
 
   /** Tipo da transação: entrada de dinheiro ou saída/gasto */
   type: TransactionType;
@@ -72,6 +107,7 @@ export interface Transaction {
 
 /** Payload para criação de uma transação avulsa, parcelamento ou projeção fixa/recorrente */
 export interface CreateTransactionDTO {
+  profileId: string;
   type: TransactionType;
   category: TransactionCategory;
   amount: number;
@@ -88,6 +124,7 @@ export interface CreateTransactionDTO {
 
 /** Payload para criação em lote de parcelas vinculadas */
 export interface CreateInstallmentGroupDTO {
+  profileId?: string;
   description: string;
   totalAmount: number;
   totalInstallments: number;
@@ -101,6 +138,7 @@ export type UpdateTransactionDTO = Partial<CreateTransactionDTO>;
 
 /** Filtros para listagem e busca */
 export interface TransactionFilters {
+  profileId?: string;
   startDate?: string;
   endDate?: string;
   type?: TransactionType;
@@ -111,10 +149,56 @@ export interface TransactionFilters {
 }
 
 // ============================================================================
+// Contratos de Leitura e Importação de Contracheque (Holerite)
+// ============================================================================
+
+export interface PayslipExtractedItem {
+  tempId: string;
+  rawCode?: string;
+  description: string;
+  amount: number;
+  type: 'income' | 'expense';
+  suggestedCategory: 'fixed' | 'recurring' | 'installment' | 'daily';
+  selected: boolean;
+}
+
+export interface PayslipParseResult {
+  employerName?: string;
+  referenceMonth?: string; // Formato YYYY-MM
+  grossAmount: number;
+  totalDeductions: number;
+  netAmount: number;
+  items: PayslipExtractedItem[];
+  rawTextPreview: string;
+}
+
+export interface BatchCreateTransactionDTO {
+  profileId: string;
+  repeatMonths?: number;
+  transactions: Omit<CreateTransactionDTO, 'profileId'>[];
+}
+
+// ============================================================================
 // Schemas de Validação (Zod) e Tipos Inferidos
 // ============================================================================
 
+export const createProfileSchema = z.object({
+  name: z.string().trim().min(1, 'O nome do perfil é obrigatório'),
+  primaryColor: z
+    .string()
+    .trim()
+    .regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, 'Cor primária deve ser um valor hexadecimal válido (ex: #6366F1)'),
+  secondaryColor: z
+    .string()
+    .trim()
+    .regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, 'Cor secundária deve ser um valor hexadecimal válido (ex: #EC4899)'),
+  avatarInitials: z.string().trim().min(1).max(4).optional(),
+});
+
+export const updateProfileSchema = createProfileSchema.partial();
+
 export const createTransactionSchema = z.object({
+  profileId: z.string().min(1, 'O profileId é obrigatório'),
   type: z.enum(['income', 'expense'], {
     message: "O tipo deve ser 'income' ou 'expense'",
   }),
@@ -136,6 +220,7 @@ export const createTransactionSchema = z.object({
 });
 
 export const updateTransactionSchema = z.object({
+  profileId: z.string().min(1).optional(),
   type: z.enum(['income', 'expense']).optional(),
   category: z.enum(['fixed', 'recurring', 'installment', 'daily']).optional(),
   amount: z.coerce
@@ -157,9 +242,29 @@ export const updateStatusSchema = z.object({
   paymentDate: z.string().nullable().optional(),
 });
 
+export const payslipExtractedItemSchema = z.object({
+  tempId: z.string(),
+  rawCode: z.string().optional(),
+  description: z.string().trim().min(1, 'A descrição é obrigatória'),
+  amount: z.coerce.number().positive('O valor deve ser positivo'),
+  type: z.enum(['income', 'expense']),
+  suggestedCategory: z.enum(['fixed', 'recurring', 'installment', 'daily']),
+  selected: z.boolean(),
+});
+
+export const batchCreateTransactionSchema = z.object({
+  profileId: z.string().min(1, 'O profileId é obrigatório'),
+  repeatMonths: z.coerce.number().int().min(1).optional(),
+  transactions: z.array(createTransactionSchema.omit({ profileId: true })),
+});
+
+export type CreateProfileInput = z.infer<typeof createProfileSchema>;
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;
 export type UpdateTransactionInput = z.infer<typeof updateTransactionSchema>;
 export type UpdateStatusInput = z.infer<typeof updateStatusSchema>;
+export type PayslipExtractedItemInput = z.infer<typeof payslipExtractedItemSchema>;
+export type BatchCreateTransactionInput = z.infer<typeof batchCreateTransactionSchema>;
 
 // ============================================================================
 // Métricas e Resumos Financeiros

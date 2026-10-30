@@ -10,8 +10,22 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Profile {
+  id             String        @id @default(uuid())
+  name           String
+  avatarInitials String
+  primaryColor   String
+  secondaryColor String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  transactions   Transaction[]
+
+  @@map("profiles")
+}
+
 model Transaction {
   id                 String    @id @default(uuid())
+  profileId          String
   type               String    // 'income' | 'expense'
   category           String    // 'fixed' | 'recurring' | 'installment' | 'daily'
   amount             Float
@@ -25,6 +39,9 @@ model Transaction {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
+  profile            Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, date])
   @@index([date])
   @@index([groupId])
   @@index([category])
