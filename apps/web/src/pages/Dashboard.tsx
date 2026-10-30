@@ -12,6 +12,7 @@ import {
   Modal,
 } from '../components/ui';
 import { TransactionForm } from '../components/TransactionForm';
+import { PayslipImportModal } from '../components/PayslipImportModal';
 import type { Transaction } from '@organizador/shared';
 import { css } from '@/styled-system/css';
 import {
@@ -35,6 +36,7 @@ import {
   Clock,
   AlertTriangle,
   AlertCircle,
+  FileText,
 } from 'lucide-react';
 
 const MONTH_NAMES = [
@@ -533,6 +535,7 @@ export const Dashboard: React.FC = () => {
   const [deletingTransaction, setDeletingTransaction] = useState<Transaction | null>(null);
   const [isIncomeModalOpen, setIsIncomeModalOpen] = useState(false);
   const [editingIncome, setEditingIncome] = useState<Transaction | null>(null);
+  const [isPayslipModalOpen, setIsPayslipModalOpen] = useState(false);
 
   // Data atual no formato YYYY-MM-DD para detecção de contas em atraso
   const todayStr = new Date().toISOString().split('T')[0];
@@ -727,6 +730,44 @@ export const Dashboard: React.FC = () => {
           >
             <ArrowLeftRight size={14} />
             <span>Trocar Perfil</span>
+          </Button>
+
+          {/* Botão de Importar Contracheque (PDF) */}
+          <Button
+            type="button"
+            onClick={() => setIsPayslipModalOpen(true)}
+            style={{
+              background: activeProfile
+                ? `linear-gradient(135deg, ${activeProfile.primaryColor}, ${activeProfile.secondaryColor})`
+                : 'linear-gradient(135deg, var(--profile-primary, #3b82f6), var(--profile-secondary, #8b5cf6))',
+              boxShadow: activeProfile
+                ? `0 2px 6px -1px ${hexToRgba(activeProfile.primaryColor, 0.4)}`
+                : '0 2px 6px -1px rgba(59, 130, 246, 0.4)',
+              color: '#ffffff',
+              border: 'none',
+            }}
+            className={css({
+              display: 'flex',
+              alignItems: 'center',
+              gap: '1.5',
+              paddingX: '3.5',
+              height: '9',
+              fontSize: 'xs',
+              fontWeight: 'semibold',
+              borderRadius: 'lg',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease-in-out',
+              _hover: {
+                filter: 'brightness(1.08)',
+                transform: 'translateY(-1px)',
+              },
+              _active: {
+                transform: 'translateY(0)',
+              },
+            })}
+          >
+            <FileText size={16} />
+            <span>Importar Contracheque (PDF)</span>
           </Button>
 
           <Button
@@ -1291,6 +1332,12 @@ export const Dashboard: React.FC = () => {
           }}
         />
       </Modal>
+
+      {/* Modal de Importação de Contracheque em PDF */}
+      <PayslipImportModal
+        isOpen={isPayslipModalOpen}
+        onClose={() => setIsPayslipModalOpen(false)}
+      />
     </div>
   );
 };
