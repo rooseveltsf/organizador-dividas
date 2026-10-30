@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { css } from '@/styled-system/css';
-import { Users, Plus, Sparkles, Check, ArrowRight } from 'lucide-react';
+import { Users, Plus, Sparkles, Check, ArrowRight, Trash2, AlertTriangle } from 'lucide-react';
 import { useProfiles, hexToRgba } from '../contexts/ProfileContext';
 import { Button, Input, Modal } from '../components/ui';
 import type { Profile } from '@organizador/shared';
@@ -18,8 +18,12 @@ const COLOR_PRESETS = [
 ];
 
 export const ProfileSelectScreen: React.FC = () => {
-  const { profiles, selectProfile, createProfile } = useProfiles();
+  const { profiles, selectProfile, createProfile, deleteProfile } = useProfiles();
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Estados para exclusão de perfil
+  const [deletingProfile, setDeletingProfile] = useState<Profile | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Estados do formulário de criação
   const [name, setName] = useState('');
@@ -186,6 +190,41 @@ export const ProfileSelectScreen: React.FC = () => {
                     height: '4px',
                   })}
                 />
+
+                {/* Botão de Excluir Perfil */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeletingProfile(profile);
+                  }}
+                  title="Excluir perfil"
+                  aria-label={`Excluir perfil ${profile.name}`}
+                  className={css({
+                    position: 'absolute',
+                    top: '2.5',
+                    right: '2.5',
+                    width: '7',
+                    height: '7',
+                    borderRadius: 'md',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: 'slate.100',
+                    color: 'slate.400',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease-in-out',
+                    zIndex: 2,
+                    _hover: {
+                      backgroundColor: 'expense.100',
+                      color: 'expense.600',
+                      transform: 'scale(1.1)',
+                    },
+                  })}
+                >
+                  <Trash2 size={13} />
+                </button>
 
                 {/* Avatar Circular Gradiente */}
                 <div
@@ -629,6 +668,77 @@ export const ProfileSelectScreen: React.FC = () => {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modal de Confirmação para Excluir Perfil */}
+      <Modal
+        isOpen={Boolean(deletingProfile)}
+        onClose={() => !isDeleting && setDeletingProfile(null)}
+        title="Excluir Perfil"
+        description="Esta ação é permanente e não poderá ser desfeita"
+      >
+        {deletingProfile && (
+          <div className={css({ display: 'flex', flexDirection: 'column', gap: '4' })}>
+            <div
+              className={css({
+                display: 'flex',
+                alignItems: 'center',
+                gap: '3',
+                padding: '3.5',
+                borderRadius: 'xl',
+                backgroundColor: 'expense.50',
+                borderWidth: '1px',
+                borderStyle: 'solid',
+                borderColor: 'expense.200',
+                color: 'expense.800',
+                fontSize: 'sm',
+              })}
+            >
+              <AlertTriangle size={24} className={css({ flexShrink: 0, color: 'expense.600' })} />
+              <div>
+                Tem certeza de que deseja excluir o perfil <strong>{deletingProfile.name}</strong>?
+                <div className={css({ fontSize: 'xs', color: 'expense.700', marginTop: '1' })}>
+                  Todas as receitas, despesas, contas e parcelamentos vinculados a este perfil serão permanentemente excluídos.
+                </div>
+              </div>
+            </div>
+
+            <div className={css({ display: 'flex', justifyContent: 'flex-end', gap: '3', marginTop: '2' })}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setDeletingProfile(null)}
+                disabled={isDeleting}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                disabled={isDeleting}
+                onClick={async () => {
+                  setIsDeleting(true);
+                  try {
+                    await deleteProfile(deletingProfile.id);
+                    setDeletingProfile(null);
+                  } catch (err) {
+                    console.error('Erro ao excluir perfil:', err);
+                  } finally {
+                    setIsDeleting(false);
+                  }
+                }}
+                className={css({
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '1.5',
+                })}
+              >
+                <Trash2 size={16} />
+                <span>{isDeleting ? 'Excluindo...' : 'Sim, Excluir Perfil'}</span>
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

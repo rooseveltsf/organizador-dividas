@@ -79,6 +79,7 @@ organizador-dividas/
 - Criação de perfis independentes (ex: membros da família ou pessoa física/jurídica).
 - Cada perfil possui **Cor Primária** e **Cor Secundária** em formato hexadecimal.
 - Ao selecionar um perfil, variáveis CSS nativas (`--profile-primary`, `--profile-secondary`, `--profile-primary-soft`, etc.) são injetadas em `:root`, alterando instantaneamente botões, gráficos, avatares e destaques visuais.
+- **Exclusão de Perfil Segura**: Opção de excluir perfis diretamente na tela de seleção inicial ou no painel do Dashboard com modal de confirmação e exclusão em cascata de todas as suas transações vinculadas.
 
 ### 2. Dashboard Financeiro Mensal
 - **4 Cards de Métricas em Tempo Real**:

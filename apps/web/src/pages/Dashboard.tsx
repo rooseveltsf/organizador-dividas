@@ -518,7 +518,7 @@ const footerPaginationInfoStyle = css({
 });
 
 export const Dashboard: React.FC = () => {
-  const { activeProfile, selectProfile } = useProfiles();
+  const { activeProfile, selectProfile, deleteProfile } = useProfiles();
   const {
     transactions,
     isLoading,
@@ -536,6 +536,8 @@ export const Dashboard: React.FC = () => {
   const [isIncomeModalOpen, setIsIncomeModalOpen] = useState(false);
   const [editingIncome, setEditingIncome] = useState<Transaction | null>(null);
   const [isPayslipModalOpen, setIsPayslipModalOpen] = useState(false);
+  const [isDeleteProfileModalOpen, setIsDeleteProfileModalOpen] = useState(false);
+  const [isDeletingProfile, setIsDeletingProfile] = useState(false);
 
   // Data atual no formato YYYY-MM-DD para detecção de contas em atraso
   const todayStr = new Date().toISOString().split('T')[0];
@@ -730,6 +732,31 @@ export const Dashboard: React.FC = () => {
           >
             <ArrowLeftRight size={14} />
             <span>Trocar Perfil</span>
+          </Button>
+
+          {/* Botão de Excluir Perfil */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsDeleteProfileModalOpen(true)}
+            title="Excluir perfil ativo"
+            className={css({
+              display: 'flex',
+              alignItems: 'center',
+              gap: '1.5',
+              height: '9',
+              fontSize: 'xs',
+              fontWeight: 'medium',
+              color: 'slate.500',
+              _hover: {
+                backgroundColor: 'expense.50',
+                color: 'expense.600',
+              },
+            })}
+          >
+            <Trash2 size={14} />
+            <span>Excluir Perfil</span>
           </Button>
 
           {/* Botão de Importar Contracheque (PDF) */}
@@ -1338,6 +1365,77 @@ export const Dashboard: React.FC = () => {
         isOpen={isPayslipModalOpen}
         onClose={() => setIsPayslipModalOpen(false)}
       />
+
+      {/* Modal de Confirmação para Excluir Perfil Ativo */}
+      <Modal
+        isOpen={isDeleteProfileModalOpen}
+        onClose={() => !isDeletingProfile && setIsDeleteProfileModalOpen(false)}
+        title="Excluir Perfil"
+        description="Esta ação é permanente e não poderá ser desfeita"
+      >
+        {activeProfile && (
+          <div className={css({ display: 'flex', flexDirection: 'column', gap: '4' })}>
+            <div
+              className={css({
+                display: 'flex',
+                alignItems: 'center',
+                gap: '3',
+                padding: '3.5',
+                borderRadius: 'xl',
+                backgroundColor: 'expense.50',
+                borderWidth: '1px',
+                borderStyle: 'solid',
+                borderColor: 'expense.200',
+                color: 'expense.800',
+                fontSize: 'sm',
+              })}
+            >
+              <AlertTriangle size={24} className={css({ flexShrink: 0, color: 'expense.600' })} />
+              <div>
+                Tem certeza de que deseja excluir permanentemente o perfil <strong>{activeProfile.name}</strong>?
+                <div className={css({ fontSize: 'xs', color: 'expense.700', marginTop: '1' })}>
+                  Todas as receitas, despesas, parcelamentos e dados deste perfil serão excluídos.
+                </div>
+              </div>
+            </div>
+
+            <div className={css({ display: 'flex', justifyContent: 'flex-end', gap: '3', marginTop: '2' })}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setIsDeleteProfileModalOpen(false)}
+                disabled={isDeletingProfile}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                disabled={isDeletingProfile}
+                onClick={async () => {
+                  setIsDeletingProfile(true);
+                  try {
+                    await deleteProfile(activeProfile.id);
+                    setIsDeleteProfileModalOpen(false);
+                  } catch (err) {
+                    console.error('Erro ao excluir perfil ativo:', err);
+                  } finally {
+                    setIsDeletingProfile(false);
+                  }
+                }}
+                className={css({
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '1.5',
+                })}
+              >
+                <Trash2 size={16} />
+                <span>{isDeletingProfile ? 'Excluindo...' : 'Sim, Excluir Perfil'}</span>
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };
