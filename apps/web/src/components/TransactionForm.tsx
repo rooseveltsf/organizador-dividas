@@ -290,6 +290,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       } else {
         // MODO CRIAÇÃO: Adiciona uma nova transação
         const createPayload: CreateTransactionDTO = {
+          profileId: '',
           type,
           category,
           description: description.trim(),

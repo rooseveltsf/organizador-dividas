@@ -6,6 +6,7 @@ import type {
   PaymentStatus,
   ApiResponse,
 } from '@organizador/shared';
+import { useProfiles } from './ProfileContext';
 
 const API_BASE_URL = 'http://localhost:3000';
 
@@ -31,6 +32,7 @@ interface TransactionProviderProps {
 }
 
 export const TransactionProvider: React.FC<TransactionProviderProps> = ({ children }) => {
+  const { activeProfile } = useProfiles();
   const currentDate = new Date();
   const [selectedMonth, setSelectedMonth] = useState<number>(currentDate.getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState<number>(currentDate.getFullYear());
@@ -44,12 +46,18 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
 
   const fetchTransactions = useCallback(
     async (month?: number, year?: number) => {
+      if (!activeProfile) {
+        setTransactions([]);
+        return;
+      }
+
       const targetMonth = month ?? selectedMonth;
       const targetYear = year ?? selectedYear;
 
       setIsLoading(true);
       try {
         const queryParams = new URLSearchParams({
+          profileId: activeProfile.id,
           month: String(targetMonth),
           year: String(targetYear),
         });
@@ -71,11 +79,21 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
         setIsLoading(false);
       }
     },
-    [selectedMonth, selectedYear]
+    [activeProfile, selectedMonth, selectedYear]
   );
 
   const addTransaction = useCallback(
     async (data: CreateTransactionDTO) => {
+      const targetProfileId = data.profileId || activeProfile?.id;
+      if (!targetProfileId) {
+        throw new Error('Nenhum perfil ativo selecionado para registrar a transação.');
+      }
+
+      const payload: CreateTransactionDTO = {
+        ...data,
+        profileId: targetProfileId,
+      };
+
       setIsLoading(true);
       try {
         const response = await fetch(`${API_BASE_URL}/transactions`, {
@@ -83,7 +101,7 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(data),
+          body: JSON.stringify(payload),
         });
 
         if (!response.ok) {
@@ -91,7 +109,7 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
           throw new Error(errorData.message || `Erro ao criar transação: ${response.statusText}`);
         }
 
-        // Após o sucesso, recarrega automaticamente as transações
+        // Após o sucesso, recarrega automaticamente as transações do perfil ativo
         await fetchTransactions(selectedMonth, selectedYear);
       } catch (error) {
         console.error('Erro ao adicionar transação:', error);
@@ -100,7 +118,7 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
         setIsLoading(false);
       }
     },
-    [fetchTransactions, selectedMonth, selectedYear]
+    [activeProfile, fetchTransactions, selectedMonth, selectedYear]
   );
 
   const updateTransaction = useCallback(
@@ -120,7 +138,6 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
           throw new Error(errorData.message || `Erro ao atualizar transação: ${response.statusText}`);
         }
 
-        // Após o sucesso, recarrega automaticamente as transações
         await fetchTransactions(selectedMonth, selectedYear);
       } catch (error) {
         console.error('Erro ao atualizar transação:', error);
@@ -149,7 +166,6 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
           throw new Error(errorData.message || `Erro ao atualizar status: ${response.statusText}`);
         }
 
-        // Após o sucesso, recarrega automaticamente as transações
         await fetchTransactions(selectedMonth, selectedYear);
       } catch (error) {
         console.error('Erro ao atualizar status da transação:', error);
@@ -175,7 +191,6 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
           throw new Error(errorData.message || `Erro ao deletar transação: ${response.statusText}`);
         }
 
-        // Após o sucesso, recarrega automaticamente as transações
         await fetchTransactions(selectedMonth, selectedYear);
       } catch (error) {
         console.error('Erro ao deletar transação:', error);
@@ -187,10 +202,14 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
     [fetchTransactions, selectedMonth, selectedYear]
   );
 
-  // Carrega as transações inicialmente e sempre que o mês ou ano selecionado mudar
+  // Recarrega as transações sempre que o perfil ativo, mês ou ano mudar
   useEffect(() => {
-    fetchTransactions(selectedMonth, selectedYear);
-  }, [selectedMonth, selectedYear, fetchTransactions]);
+    if (activeProfile) {
+      fetchTransactions(selectedMonth, selectedYear);
+    } else {
+      setTransactions([]);
+    }
+  }, [activeProfile?.id, selectedMonth, selectedYear, fetchTransactions]);
 
   return (
     <TransactionContext.Provider

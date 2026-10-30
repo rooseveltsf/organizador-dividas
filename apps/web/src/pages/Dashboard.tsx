@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useTransactions } from '../contexts/TransactionContext';
+import { useProfiles, hexToRgba } from '../contexts/ProfileContext';
 import {
   Card,
   CardHeader,
@@ -25,6 +26,7 @@ import {
   Layers,
   ArrowDownRight,
   ArrowUpRight,
+  ArrowLeftRight,
   Plus,
   Pencil,
   Check,
@@ -88,11 +90,18 @@ const pageContainerStyle = css({
 
 const headerStyle = css({
   display: 'flex',
-  flexDirection: { base: 'column', sm: 'row' },
+  flexDirection: { base: 'column', md: 'row' },
   justifyContent: 'space-between',
-  alignItems: { base: 'stretch', sm: 'center' },
+  alignItems: { base: 'stretch', md: 'center' },
   gap: '4',
   marginBottom: '8',
+  padding: '5',
+  borderRadius: '2xl',
+  borderWidth: '1px',
+  borderStyle: 'solid',
+  borderColor: 'slate.200',
+  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
+  transition: 'all 0.25s ease-in-out',
 });
 
 const headerTitleStyle = css({
@@ -426,13 +435,21 @@ const transactionAmountStyle = (isIncome: boolean, isPaid: boolean) =>
 const actionButtonGhostStyle = (variant: 'edit' | 'delete') =>
   css({
     color: 'slate.400',
-    padding: '1.5',
-    height: '8',
-    width: '8',
+    height: '9',
+    width: '9',
+    minWidth: '9',
+    padding: '0',
+    paddingInline: '0',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
     borderRadius: 'lg',
+    cursor: 'pointer',
+    transition: 'all 0.15s ease-in-out',
     _hover: {
-      backgroundColor: variant === 'delete' ? 'expense.50' : 'brand.50',
-      color: variant === 'delete' ? 'expense.600' : 'brand.600',
+      backgroundColor: variant === 'delete' ? 'expense.50' : 'brand.primarySoft',
+      color: variant === 'delete' ? 'expense.600' : 'brand.primary',
     },
   });
 
@@ -499,6 +516,7 @@ const footerPaginationInfoStyle = css({
 });
 
 export const Dashboard: React.FC = () => {
+  const { activeProfile, selectProfile } = useProfiles();
   const {
     transactions,
     isLoading,
@@ -617,17 +635,100 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className={pageContainerStyle}>
-      {/* Cabeçalho da Aplicação */}
-      <header className={headerStyle}>
-        <div>
-          <h1 className={headerTitleStyle}>Organizador de Dívidas</h1>
-          <p className={headerSubtitleStyle}>
-            Painel financeiro mensal e controle de parcelamentos
-          </p>
+      {/* Cabeçalho da Aplicação com Avatar e Gradiente Dinâmico do Perfil */}
+      <header
+        style={{
+          background: activeProfile
+            ? `linear-gradient(135deg, ${hexToRgba(activeProfile.primaryColor, 0.08)}, ${hexToRgba(activeProfile.secondaryColor, 0.04)}), #ffffff`
+            : '#ffffff',
+          borderColor: activeProfile ? hexToRgba(activeProfile.primaryColor, 0.25) : '#e2e8f0',
+        }}
+        className={headerStyle}
+      >
+        <div className={css({ display: 'flex', alignItems: 'center', gap: '4', flexWrap: 'wrap' })}>
+          {/* Avatar Colorido do Perfil Ativo */}
+          {activeProfile && (
+            <div
+              style={{
+                background: `linear-gradient(135deg, ${activeProfile.primaryColor}, ${activeProfile.secondaryColor})`,
+                boxShadow: `0 4px 10px -1px ${hexToRgba(activeProfile.primaryColor, 0.35)}`,
+              }}
+              className={css({
+                width: '12',
+                height: '12',
+                borderRadius: 'full',
+                color: 'white',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: '800',
+                fontSize: 'lg',
+                flexShrink: 0,
+              })}
+            >
+              {activeProfile.avatarInitials}
+            </div>
+          )}
+
+          <div>
+            <div className={css({ display: 'flex', alignItems: 'center', gap: '2.5' })}>
+              <h1 className={headerTitleStyle}>
+                {activeProfile ? activeProfile.name : 'Organizador de Dívidas'}
+              </h1>
+              {activeProfile && (
+                <span
+                  style={{
+                    color: activeProfile.primaryColor,
+                    backgroundColor: hexToRgba(activeProfile.primaryColor, 0.1),
+                    borderColor: hexToRgba(activeProfile.primaryColor, 0.25),
+                  }}
+                  className={css({
+                    fontSize: '2xs',
+                    fontWeight: 'bold',
+                    textTransform: 'uppercase',
+                    paddingX: '2',
+                    paddingY: '0.5',
+                    borderRadius: 'full',
+                    borderWidth: '1px',
+                    borderStyle: 'solid',
+                  })}
+                >
+                  Perfil Ativo
+                </span>
+              )}
+            </div>
+            <p className={headerSubtitleStyle}>
+              Painel financeiro mensal e controle de parcelamentos
+            </p>
+          </div>
         </div>
 
-        {/* Ações do Cabeçalho: Botão de Nova Receita + Seletor de Mês/Ano */}
+        {/* Ações do Cabeçalho: Botão de Trocar Perfil + Nova Receita + Seletor de Mês/Ano */}
         <div className={css({ display: 'flex', alignItems: 'center', gap: '3', flexWrap: 'wrap' })}>
+          {/* Botão de Trocar Perfil */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => selectProfile(null)}
+            className={css({
+              display: 'flex',
+              alignItems: 'center',
+              gap: '1.5',
+              height: '9',
+              fontSize: 'xs',
+              fontWeight: 'semibold',
+              color: 'slate.700',
+              _hover: {
+                backgroundColor: 'slate.100',
+                color: 'slate.900',
+              },
+            })}
+          >
+            <ArrowLeftRight size={14} />
+            <span>Trocar Perfil</span>
+          </Button>
+
           <Button
             type="button"
             variant="primary"
@@ -1034,7 +1135,7 @@ export const Dashboard: React.FC = () => {
                           aria-label={`Editar ${tx.description}`}
                           className={actionButtonGhostStyle('edit')}
                         >
-                          <Pencil size={16} />
+                          <Pencil size={18} />
                         </Button>
 
                         {/* Botão de Excluir */}
@@ -1046,7 +1147,7 @@ export const Dashboard: React.FC = () => {
                           aria-label={`Excluir ${tx.description}`}
                           className={actionButtonGhostStyle('delete')}
                         >
-                          <Trash2 size={16} />
+                          <Trash2 size={18} />
                         </Button>
                       </div>
                     </div>

@@ -70,6 +70,13 @@ export default defineConfig({
       },
       semanticTokens: {
         colors: {
+          brand: {
+            primary: { value: 'var(--profile-primary)' },
+            primaryHover: { value: 'var(--profile-primary-hover)' },
+            primarySoft: { value: 'var(--profile-primary-soft)' },
+            secondary: { value: 'var(--profile-secondary)' },
+            secondarySoft: { value: 'var(--profile-secondary-soft)' },
+          },
           // Tokens semânticos para UI financeira
           incomeText: { value: '{colors.income.700}' },
           incomeBg: { value: '{colors.income.50}' },

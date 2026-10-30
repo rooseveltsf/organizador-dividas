@@ -159,6 +159,8 @@ export interface PayslipExtractedItem {
   amount: number;
   type: 'income' | 'expense';
   suggestedCategory: 'fixed' | 'recurring' | 'installment' | 'daily';
+  currentInstallment?: number;
+  totalInstallments?: number;
   selected: boolean;
 }
 
@@ -249,6 +251,8 @@ export const payslipExtractedItemSchema = z.object({
   amount: z.coerce.number().positive('O valor deve ser positivo'),
   type: z.enum(['income', 'expense']),
   suggestedCategory: z.enum(['fixed', 'recurring', 'installment', 'daily']),
+  currentInstallment: z.coerce.number().int().positive().optional().nullable(),
+  totalInstallments: z.coerce.number().int().positive().optional().nullable(),
   selected: z.boolean(),
 });
 

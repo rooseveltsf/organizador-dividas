@@ -40,8 +40,8 @@ const selectRecipe = cva({
           borderColor: 'slate.300',
         },
         _focus: {
-          borderColor: 'brand.500',
-          ringColor: 'brand.500',
+          borderColor: 'brand.primary',
+          ringColor: 'brand.primarySoft',
         },
       },
     },

@@ -21,21 +21,21 @@ const buttonRecipe = cva({
     },
     _focusVisible: {
       ring: '2px',
-      ringColor: 'brand.500',
+      ringColor: 'brand.primary',
       ringOffset: '2px',
     },
   },
   variants: {
     variant: {
       primary: {
-        bg: 'brand.600',
+        bg: 'brand.primary',
         color: 'white',
         boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
         _hover: {
-          bg: 'brand.700',
+          bg: 'brand.primaryHover',
         },
         _active: {
-          bg: 'brand.800',
+          bg: 'brand.primaryHover',
         },
       },
       danger: {

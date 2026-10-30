@@ -7,6 +7,7 @@ import {
 
 import transactionRouter from './routes/transactions';
 import profileRouter from './routes/profiles';
+import payslipRouter from './routes/payslip';
 
 import { prisma } from './prisma';
 export { prisma };
@@ -38,6 +39,10 @@ app.use('/api/transactions', transactionRouter);
 // Rotas de Perfis de Usuário
 app.use('/profiles', profileRouter);
 app.use('/api/profiles', profileRouter);
+
+// Rotas de Leitura e Importação de Holerites (Contracheques em PDF)
+app.use('/payslip', payslipRouter);
+app.use('/api/payslip', payslipRouter);
 
 // Inicialização do servidor
 const server = app.listen(PORT, () => {
