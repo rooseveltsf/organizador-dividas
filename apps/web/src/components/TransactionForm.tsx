@@ -71,9 +71,10 @@ const installmentBoxStyle = css({
 });
 
 const installmentModeContainerStyle = css({
+  flexWrap: 'wrap',
   display: 'flex',
   borderRadius: 'lg',
-  backgroundColor: 'slate.200',
+  backgroundColor: 'slate.100',
   p: '1',
   gap: '1',
 });
@@ -330,6 +331,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           <div className={buttonGroupStyle}>
             <Button
               type="button"
+              aria-pressed={type === 'expense'}
               variant={type === 'expense' ? 'danger' : 'ghost'}
               onClick={() => {
                 setType('expense');
@@ -343,6 +345,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             </Button>
             <Button
               type="button"
+              aria-pressed={type === 'income'}
               variant={type === 'income' ? 'primary' : 'ghost'}
               onClick={() => {
                 setType('income');
@@ -403,6 +406,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               <Button
                 type="button"
                 size="sm"
+                aria-pressed={installmentMode === 'by_installment'}
                 variant={installmentMode === 'by_installment' ? 'primary' : 'ghost'}
                 onClick={() => handleModeChange('by_installment')}
                 className={css({ flex: 1, fontSize: 'xs' })}
@@ -412,6 +416,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               <Button
                 type="button"
                 size="sm"
+                aria-pressed={installmentMode === 'by_total'}
                 variant={installmentMode === 'by_total' ? 'primary' : 'ghost'}
                 onClick={() => handleModeChange('by_total')}
                 className={css({ flex: 1, fontSize: 'xs' })}
@@ -551,10 +556,6 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             alignItems: 'center',
             justifyContent: 'center',
             gap: '2',
-            backgroundColor: type === 'income' ? 'income.600' : 'brand.600',
-            _hover: {
-              backgroundColor: type === 'income' ? 'income.700' : 'brand.700',
-            },
           })}
         >
           {isEditing ? <Check size={18} /> : <PlusCircle size={18} />}

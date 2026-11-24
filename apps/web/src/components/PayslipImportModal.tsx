@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useMemo, useCallback } from 'react';
 import { css, cx } from '@/styled-system/css';
 import {
   FileText,
@@ -11,12 +11,13 @@ import {
   Wallet,
   PlusCircle,
   Trash2,
-  Calendar,
   Layers,
   CreditCard,
   RefreshCw,
   Loader2,
   Sparkles,
+  Clock,
+  Coins,
 } from 'lucide-react';
 import type {
   PayslipParseResult,
@@ -25,9 +26,10 @@ import type {
   BatchCreateTransactionDTO,
   ApiResponse,
 } from '@organizador/shared';
-import { useProfiles, hexToRgba } from '../contexts/ProfileContext';
+import { useProfiles } from '../contexts/ProfileContext';
 import { useTransactions } from '../contexts/TransactionContext';
-import { Button, Input, Select } from './ui';
+import { ModalLayer } from './ui/Modal';
+import { Button, Input } from './ui';
 
 const API_BASE_URL = 'http://localhost:3000';
 
@@ -41,11 +43,14 @@ export interface EditablePayslipItem {
   tempId: string;
   rawCode?: string;
   description: string;
+  reference?: string;
   amount: number;
   type: TransactionType;
   category: TransactionCategory;
   currentInstallment?: number;
   totalInstallments?: number;
+  isAdvance?: boolean;
+  suggestedDate?: string;
   selected: boolean;
 }
 
@@ -65,7 +70,6 @@ const overlayStyle = css({
   inset: '0',
   zIndex: 60,
   backgroundColor: 'rgba(15, 23, 42, 0.65)',
-  backdropFilter: 'blur(6px)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -77,11 +81,9 @@ const modalBoxStyle = css({
   position: 'relative',
   width: '100%',
   maxWidth: '1280px',
-  height: '92vh',
-  maxHeight: '92vh',
-  backgroundColor: 'white',
+  maxHeight: '94dvh',
+  backgroundColor: 'bgCard',
   borderRadius: '2xl',
-  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
   borderWidth: '1px',
   borderStyle: 'solid',
   borderColor: 'slate.200',
@@ -105,8 +107,10 @@ const modalHeaderStyle = css({
 });
 
 const modalTitleStyle = css({
-  fontSize: 'lg',
-  fontWeight: 'bold',
+  fontFamily: 'heading',
+  fontSize: '2xl',
+  fontWeight: 'normal',
+  flexWrap: 'wrap',
   color: 'slate.900',
   lineHeight: '1.2',
   display: 'flex',
@@ -133,12 +137,13 @@ const closeButtonStyle = css({
 
 // Drag & Drop
 const dropzoneContainerStyle = css({
+  overflowY: 'auto',
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
   justifyContent: 'center',
-  padding: { base: '6', sm: '12' },
+  padding: { base: '4', sm: '8' },
   gap: '6',
   textAlign: 'center',
 });
@@ -177,13 +182,13 @@ const splitScreenContainerStyle = css({
   flexDirection: { base: 'column', lg: 'row' },
   flex: 1,
   minHeight: 0,
-  overflow: 'hidden',
+  overflowY: { base: 'auto', lg: 'hidden' },
   backgroundColor: 'slate.50',
 });
 
 const leftColumnStyle = css({
   width: { base: '100%', lg: '40%' },
-  height: { base: '340px', lg: '100%' },
+  height: { base: '240px', lg: '100%' },
   display: 'flex',
   flexDirection: 'column',
   borderRightWidth: { base: '0', lg: '1px' },
@@ -191,7 +196,7 @@ const leftColumnStyle = css({
   borderRightStyle: 'solid',
   borderBottomStyle: 'solid',
   borderColor: 'slate.200',
-  backgroundColor: 'white',
+  backgroundColor: 'bgCard',
   padding: { base: '3', sm: '4' },
   gap: '2.5',
   minHeight: 0,
@@ -217,17 +222,16 @@ const iframeContainerStyle = css({
   borderStyle: 'solid',
   borderColor: 'slate.200',
   backgroundColor: 'slate.100',
-  boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.04)',
 });
 
 const rightColumnStyle = css({
   width: { base: '100%', lg: '60%' },
-  height: '100%',
+  height: { base: 'auto', lg: '100%' },
   display: 'flex',
   flexDirection: 'column',
   minHeight: 0,
-  flex: 1,
-  backgroundColor: 'white',
+  flex: { base: 'none', lg: 1 },
+  backgroundColor: 'bgCard',
 });
 
 const rightScrollAreaStyle = css({
@@ -237,13 +241,13 @@ const rightScrollAreaStyle = css({
   padding: { base: '4', sm: '6' },
   display: 'flex',
   flexDirection: 'column',
-  gap: '5',
+  gap: '4',
 });
 
 // 3 Metric Cards
 const cardsGridStyle = css({
   display: 'grid',
-  gridTemplateColumns: 'repeat(3, 1fr)',
+  gridTemplateColumns: { base: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
   gap: { base: '2', sm: '3' },
 });
 
@@ -274,6 +278,19 @@ const metricValueStyle = css({
   lineHeight: '1.2',
 });
 
+// Adiantamento Banner
+const advanceBannerStyle = css({
+  padding: '3.5',
+  borderRadius: 'xl',
+  backgroundColor: 'brand.50',
+  borderWidth: '1px',
+  borderStyle: 'solid',
+  borderColor: 'brand.200',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '2',
+});
+
 // Mode Selector
 const modeSelectorContainerStyle = css({
   display: 'grid',
@@ -302,9 +319,8 @@ const modeButtonStyle = css({
 });
 
 const modeButtonActiveStyle = css({
-  backgroundColor: 'white',
+  backgroundColor: 'bgCard',
   color: 'slate.900',
-  boxShadow: '0 2px 5px rgba(0, 0, 0, 0.08)',
 });
 
 const modeButtonInactiveStyle = css({
@@ -323,7 +339,7 @@ const tableContainerStyle = css({
   borderColor: 'slate.200',
   borderRadius: 'xl',
   overflow: 'hidden',
-  backgroundColor: 'white',
+  backgroundColor: 'bgCard',
 });
 
 const tableHeaderBarStyle = css({
@@ -339,6 +355,8 @@ const tableHeaderBarStyle = css({
   fontSize: 'xs',
   color: 'slate.600',
   fontWeight: 'medium',
+  flexWrap: 'wrap',
+  gap: '2',
 });
 
 const tableScrollWrapperStyle = css({
@@ -348,6 +366,7 @@ const tableScrollWrapperStyle = css({
 });
 
 const tableStyle = css({
+  minWidth: '700px',
   width: '100%',
   borderCollapse: 'collapse',
   textAlign: 'left',
@@ -398,7 +417,7 @@ const tableInputStyle = css({
   borderWidth: '1px',
   borderStyle: 'solid',
   borderColor: 'slate.200',
-  backgroundColor: 'white',
+  backgroundColor: 'bgCard',
   color: 'slate.800',
   outline: 'none',
   width: '100%',
@@ -418,7 +437,7 @@ const tableSelectStyle = css({
   borderWidth: '1px',
   borderStyle: 'solid',
   borderColor: 'slate.200',
-  backgroundColor: 'white',
+  backgroundColor: 'bgCard',
   color: 'slate.800',
   outline: 'none',
   cursor: 'pointer',
@@ -440,6 +459,23 @@ const installmentBadgeStyle = css({
   borderWidth: '1px',
   borderStyle: 'solid',
   borderColor: 'warning.200',
+  fontSize: '2xs',
+  fontWeight: 'bold',
+  whiteSpace: 'nowrap',
+});
+
+const advancePillStyle = css({
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '1',
+  paddingX: '1.5',
+  paddingY: '0.5',
+  borderRadius: 'md',
+  backgroundColor: 'brand.50',
+  color: 'brand.700',
+  borderWidth: '1px',
+  borderStyle: 'solid',
+  borderColor: 'brand.200',
   fontSize: '2xs',
   fontWeight: 'bold',
   whiteSpace: 'nowrap',
@@ -482,7 +518,7 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
   const { activeProfile } = useProfiles();
   const { fetchTransactions, selectedMonth, selectedYear } = useTransactions();
 
-  // Estados principais de etapa e preview
+  // Estados principais
   const [step, setStep] = useState<'upload' | 'review'>('upload');
   const [isDragging, setIsDragging] = useState(false);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -494,22 +530,29 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
   const [parsedData, setParsedData] = useState<PayslipParseResult | null>(null);
 
   // Modos de importação: 'net' (Modo 1) ou 'detailed' (Modo 2)
-  const [importMode, setImportMode] = useState<'net' | 'detailed'>('detailed');
+  const [importMode, setImportMode] = useState<'net' | 'detailed'>('net');
 
-  // Modo 1 (Apenas Salário Líquido)
-  const [netDescription, setNetDescription] = useState('Salário Líquido');
-  const [netAmount, setNetAmount] = useState<number>(0);
-  const [netCategory, setNetCategory] = useState<TransactionCategory>('fixed');
+  // Modo 1: Configuração do Salário Líquido e Quinzena (Adiantamento)
+  const [hasAdvance, setHasAdvance] = useState(false);
 
-  // Modo 2 (Tabela Editável)
+  // 1ª Entrada: Adiantamento Salarial (Quinzena / Dia 20)
+  const [includeAdvance, setIncludeAdvance] = useState(true);
+  const [advanceDescription, setAdvanceDescription] = useState('Adiantamento Salarial (Quinzena)');
+  const [advanceAmount, setAdvanceAmount] = useState<number>(0);
+  const [advanceDate, setAdvanceDate] = useState<string>('');
+
+  // 2ª Entrada: Saldo de Salário Líquido (5º dia útil)
+  const [includeNetBalance, setIncludeNetBalance] = useState(true);
+  const [netBalanceDescription, setNetBalanceDescription] = useState('Saldo de Salário (5º dia útil)');
+  const [netBalanceAmount, setNetBalanceAmount] = useState<number>(0);
+  const [netBalanceDate, setNetBalanceDate] = useState<string>('');
+
+  // Modo 2: Tabela de Rubricas Detalhadas
   const [items, setItems] = useState<EditablePayslipItem[]>([]);
+  const [tableFilter, setTableFilter] = useState<'incomes_only' | 'all'>('incomes_only');
 
-  // Parâmetros de Projeção e Gravação em Lote (Rodapé)
-  const [receiptDate, setReceiptDate] = useState(() => {
-    const padMonth = String(selectedMonth).padStart(2, '0');
-    return `${selectedYear}-${padMonth}-05`;
-  });
-  const [repeatMonths, setRepeatMonths] = useState<number>(1); // 1 = Apenas este mês, 6, 12
+  // Parâmetros de Projeção
+  const [repeatMonths, setRepeatMonths] = useState<number>(1);
 
   // Estado de envio / gravação
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -525,7 +568,7 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
     }
   }, [pdfObjectUrl]);
 
-  // Limpa tudo ao fechar o modal ou desmontar
+  // Limpa tudo ao fechar o modal
   const handleClose = useCallback(() => {
     revokeCurrentPdfUrl();
     setStep('upload');
@@ -538,37 +581,10 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
     onClose();
   }, [onClose, revokeCurrentPdfUrl]);
 
-  // Tecla Escape fecha o modal
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !isParsing && !isSubmitting) {
-        handleClose();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isParsing, isSubmitting, handleClose]);
-
-  // Bloqueio do scroll da janela
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => {
-      document.body.style.overflow = '';
-    };
-  }, [isOpen]);
-
   // Envio imediato do arquivo PDF para POST /api/payslip/parse
   const processPdfFile = async (file: File) => {
     if (!file) return;
 
-    // Validação estrita de formato PDF
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
     if (!isPdf) {
       setParseError('Formato inválido. Por favor, envie exclusivamente documentos no formato PDF.');
@@ -580,7 +596,6 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
       return;
     }
 
-    // Revoga URL antiga caso exista e gera nova em memória
     if (pdfObjectUrl) {
       URL.revokeObjectURL(pdfObjectUrl);
     }
@@ -608,32 +623,40 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
       const parsed = result.data;
       setParsedData(parsed);
 
-      // Preenche dados do Modo 1
-      const employerLabel = parsed.employerName ? ` (${parsed.employerName})` : '';
-      setNetDescription(`Salário Líquido${employerLabel}`);
-      setNetAmount(parsed.netAmount || 0);
-      setNetCategory('fixed');
+      // Tratamento Inteligente de Adiantamento Salarial / Quinzena
+      const hasAdv = Boolean(parsed.hasAdvancePayment && (parsed.advanceAmount || 0) > 0);
+      setHasAdvance(hasAdv);
+
+      if (hasAdv) {
+        setAdvanceAmount(parsed.advanceAmount || 0);
+        setAdvanceDate(parsed.advanceDate || `${parsed.referenceMonth || '2026-07'}-20`);
+        setIncludeAdvance(true);
+
+        setNetBalanceAmount(parsed.netAmount || 0);
+        setNetBalanceDate(parsed.netBalanceDate || `${parsed.referenceMonth || '2026-07'}-05`);
+        setIncludeNetBalance(true);
+      } else {
+        setNetBalanceAmount(parsed.netAmount || 0);
+        setNetBalanceDate(parsed.netBalanceDate || `${parsed.referenceMonth || '2026-07'}-05`);
+      }
 
       // Preenche itens do Modo 2
       const mappedItems: EditablePayslipItem[] = (parsed.items || []).map((it) => ({
         tempId: it.tempId || Math.random().toString(36).substring(2, 9),
         rawCode: it.rawCode,
         description: it.description || 'Lançamento',
+        reference: it.reference,
         amount: Number(it.amount) || 0,
         type: it.type || 'income',
         category: it.suggestedCategory || 'fixed',
         currentInstallment: it.currentInstallment || 1,
         totalInstallments: it.totalInstallments || 1,
+        isAdvance: it.isAdvance,
+        suggestedDate: it.suggestedDate,
         selected: it.selected !== false,
       }));
 
       setItems(mappedItems);
-
-      // Atualiza data de competência se identificada
-      if (parsed.referenceMonth) {
-        setReceiptDate(`${parsed.referenceMonth}-05`);
-      }
-
       setStep('review');
     } catch (err) {
       console.error('Erro ao analisar contracheque:', err);
@@ -678,45 +701,34 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
     }
   };
 
-  // Cálculos dinâmicos para os 3 Cards do Topo
-  const { dynamicGross, dynamicDeductions, dynamicNet } = useMemo(() => {
-    if (importMode === 'net') {
-      return {
-        dynamicGross: parsedData?.grossAmount || netAmount,
-        dynamicDeductions: parsedData?.totalDeductions || 0,
-        dynamicNet: netAmount,
-      };
+  // Itens filtrados para a tabela do Modo 2
+  const visibleItems = useMemo(() => {
+    if (tableFilter === 'incomes_only') {
+      return items.filter((i) => i.type === 'income');
     }
+    return items;
+  }, [items, tableFilter]);
 
-    const selectedItems = items.filter((it) => it.selected);
-    const gross = selectedItems
-      .filter((it) => it.type === 'income')
-      .reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-    const deductions = selectedItems
-      .filter((it) => it.type === 'expense')
-      .reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-    const net = gross - deductions;
-
-    return {
-      dynamicGross: gross,
-      dynamicDeductions: deductions,
-      dynamicNet: net,
-    };
-  }, [importMode, items, parsedData, netAmount]);
-
-  // Manipulação dos itens da tabela editável (Modo 2)
-  const allSelected = useMemo(
-    () => items.length > 0 && items.every((i) => i.selected),
-    [items]
+  // Manipulação da tabela editável
+  const allVisibleSelected = useMemo(
+    () => visibleItems.length > 0 && visibleItems.every((i) => i.selected),
+    [visibleItems]
   );
-  const someSelected = useMemo(
-    () => items.some((i) => i.selected) && !allSelected,
-    [items, allSelected]
+  const someVisibleSelected = useMemo(
+    () => visibleItems.some((i) => i.selected) && !allVisibleSelected,
+    [visibleItems, allVisibleSelected]
   );
 
-  const toggleSelectAll = () => {
-    const targetState = !allSelected;
-    setItems((prev) => prev.map((item) => ({ ...item, selected: targetState })));
+  const toggleSelectAllVisible = () => {
+    const targetState = !allVisibleSelected;
+    setItems((prev) =>
+      prev.map((item) => {
+        if (visibleItems.some((v) => v.tempId === item.tempId)) {
+          return { ...item, selected: targetState };
+        }
+        return item;
+      })
+    );
   };
 
   const toggleItemSelection = (tempId: string) => {
@@ -734,7 +746,6 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
       prev.map((item) => {
         if (item.tempId === tempId) {
           const updated = { ...item, [field]: value };
-          // Se alterar categoria para 'installment', inicializa parcelas se vazias
           if (field === 'category' && value === 'installment') {
             updated.currentInstallment = updated.currentInstallment || 1;
             updated.totalInstallments = updated.totalInstallments || 12;
@@ -749,9 +760,9 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
   const handleAddNewItem = () => {
     const newItem: EditablePayslipItem = {
       tempId: Math.random().toString(36).substring(2, 9),
-      description: 'Novo Lançamento',
+      description: 'Nova Receita / Entrada',
       amount: 100.0,
-      type: 'expense',
+      type: 'income',
       category: 'fixed',
       selected: true,
     };
@@ -776,20 +787,51 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
       let transactionsPayload = [];
 
       if (importMode === 'net') {
-        if (netAmount <= 0) {
-          throw new Error('O valor líquido deve ser maior que zero.');
-        }
+        if (hasAdvance) {
+          if (!includeAdvance && !includeNetBalance) {
+            throw new Error('Selecione pelo menos uma das entradas (Adiantamento ou Saldo) para lançar.');
+          }
 
-        transactionsPayload = [
-          {
+          if (includeAdvance) {
+            if (advanceAmount <= 0) throw new Error('O valor do adiantamento deve ser maior que zero.');
+            if (!advanceDate) throw new Error('Informe a data do adiantamento.');
+
+            transactionsPayload.push({
+              type: 'income' as TransactionType,
+              category: 'fixed' as TransactionCategory,
+              description: advanceDescription.trim() || 'Adiantamento Salarial (Quinzena)',
+              amount: Math.round(advanceAmount * 100) / 100,
+              date: advanceDate,
+              status: 'pending' as const,
+            });
+          }
+
+          if (includeNetBalance) {
+            if (netBalanceAmount <= 0) throw new Error('O valor do saldo líquido deve ser maior que zero.');
+            if (!netBalanceDate) throw new Error('Informe a data do saldo líquido.');
+
+            transactionsPayload.push({
+              type: 'income' as TransactionType,
+              category: 'fixed' as TransactionCategory,
+              description: netBalanceDescription.trim() || 'Saldo de Salário (5º dia útil)',
+              amount: Math.round(netBalanceAmount * 100) / 100,
+              date: netBalanceDate,
+              status: 'pending' as const,
+            });
+          }
+        } else {
+          if (netBalanceAmount <= 0) throw new Error('O valor líquido deve ser maior que zero.');
+          if (!netBalanceDate) throw new Error('Informe a data de recebimento.');
+
+          transactionsPayload.push({
             type: 'income' as TransactionType,
-            category: netCategory,
-            description: netDescription.trim() || 'Salário Líquido',
-            amount: Math.round(netAmount * 100) / 100,
-            date: receiptDate,
+            category: 'fixed' as TransactionCategory,
+            description: netBalanceDescription.trim() || 'Salário Líquido',
+            amount: Math.round(netBalanceAmount * 100) / 100,
+            date: netBalanceDate,
             status: 'pending' as const,
-          },
-        ];
+          });
+        }
       } else {
         const activeItems = items.filter((it) => it.selected);
 
@@ -811,7 +853,7 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
           category: item.category,
           description: item.description.trim(),
           amount: Math.round(item.amount * 100) / 100,
-          date: receiptDate,
+          date: item.suggestedDate || netBalanceDate || new Date().toISOString().split('T')[0],
           currentInstallment:
             item.category === 'installment' ? Number(item.currentInstallment) || 1 : undefined,
           totalInstallments:
@@ -861,43 +903,20 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div
+    <ModalLayer
       className={overlayStyle}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !isParsing && !isSubmitting) {
-          handleClose();
-        }
-      }}
-      role="dialog"
-      aria-modal="true"
+      onDismiss={() => { if (!isParsing && !isSubmitting) handleClose(); }}
+      aria-label="Importar contracheque"
     >
-      <div className={modalBoxStyle}>
+      <div className={cx(modalBoxStyle, step === 'review' && css({ height: '94dvh' }))}>
         {/* Cabeçalho do Modal */}
         <div className={modalHeaderStyle}>
           <div className={css({ display: 'flex', alignItems: 'center', gap: '3' })}>
-            <div
-              style={{
-                background: activeProfile
-                  ? `linear-gradient(135deg, ${activeProfile.primaryColor}, ${activeProfile.secondaryColor})`
-                  : 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-              }}
-              className={css({
-                width: '9',
-                height: '9',
-                borderRadius: 'lg',
-                color: 'white',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
-              })}
-            >
-              <FileText size={18} />
-            </div>
+            <FileText size={22} className={css({ color: 'brand.600', flexShrink: 0 })} />
 
             <div>
               <h2 className={modalTitleStyle}>
-                <span>Importação Inteligente de Contracheque</span>
+                <span>Importar contracheque</span>
                 {parsedData?.employerName && (
                   <span
                     className={css({
@@ -908,6 +927,10 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                       paddingX: '2',
                       paddingY: '0.5',
                       borderRadius: 'md',
+                      maxWidth: '320px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
                     })}
                   >
                     {parsedData.employerName}
@@ -916,7 +939,7 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
               </h2>
               <p className={css({ fontSize: 'xs', color: 'slate.500', mt: '0.5' })}>
                 {step === 'upload'
-                  ? 'Envie o contracheque em PDF para extração automática de rendimentos e descontos.'
+                  ? 'Envie o contracheque em PDF para extração automática de rendimentos e adiantamentos.'
                   : `Documento: ${pdfFile?.name || 'contracheque.pdf'} • Perfil: ${activeProfile?.name || 'Ativo'}`}
               </p>
             </div>
@@ -945,6 +968,15 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
             />
 
             <div
+              role="button"
+              tabIndex={isParsing ? -1 : 0}
+              aria-disabled={isParsing}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  if (!isParsing) fileInputRef.current?.click();
+                }
+              }}
               className={cx(dropzoneBoxStyle, isDragging && dropzoneActiveStyle)}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -952,15 +984,8 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
               onClick={() => !isParsing && fileInputRef.current?.click()}
             >
               <div
-                style={{
-                  background: activeProfile
-                    ? hexToRgba(activeProfile.primaryColor, 0.12)
-                    : 'rgba(59, 130, 246, 0.12)',
-                  color: activeProfile?.primaryColor || '#3b82f6',
-                }}
                 className={css({
-                  width: '16',
-                  height: '16',
+                  color: 'brand.600',
                   borderRadius: 'full',
                   display: 'flex',
                   alignItems: 'center',
@@ -983,7 +1008,7 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                 </h3>
                 <p className={css({ fontSize: 'sm', color: 'slate.500', mt: '1' })}>
                   {isParsing
-                    ? 'Nossa inteligência está analisando rubricas, parcelas e totais.'
+                    ? 'Nossa inteligência está identificando proventos, adiantamento quinzenal e saldo líquido.'
                     : 'ou clique nesta área para navegar e selecionar'}
                 </p>
               </div>
@@ -999,7 +1024,7 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                 })}
               >
                 <Sparkles size={14} className={css({ color: 'brand.primary' })} />
-                <span>Compatível com folhas de pagamento e holerites convencionais (PDF até 5MB)</span>
+                <span>Reconhecimento inteligente de 1ª via e adiantamentos quinzenais (PDF até 5MB)</span>
               </div>
             </div>
 
@@ -1093,7 +1118,7 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
             {/* Coluna da Direita (60% desktop): Painel de Revisão e Configuração */}
             <div className={rightColumnStyle}>
               <div className={rightScrollAreaStyle}>
-                {/* 1. Três Cards Compactos no Topo */}
+                {/* 1. Três Cards de Totais Oficiais */}
                 <div className={cardsGridStyle}>
                   {/* Salário Bruto (Verde) */}
                   <div
@@ -1111,7 +1136,7 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                       <span>Salário Bruto</span>
                     </div>
                     <div className={metricValueStyle}>
-                      {formatCurrency(dynamicGross)}
+                      {formatCurrency(parsedData?.grossAmount || 0)}
                     </div>
                   </div>
 
@@ -1128,37 +1153,55 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                   >
                     <div className={metricLabelStyle}>
                       <TrendingDown size={12} />
-                      <span>Descontos</span>
+                      <span>Descontos Folha</span>
                     </div>
                     <div className={metricValueStyle}>
-                      {formatCurrency(dynamicDeductions)}
+                      {formatCurrency(parsedData?.totalDeductions || 0)}
                     </div>
                   </div>
 
-                  {/* Líquido a Receber (Cor Primária do Perfil Ativo) */}
+                  {/* Líquido no Holerite (Cor Primária do Perfil) */}
                   <div
-                    style={{
-                      backgroundColor: activeProfile
-                        ? hexToRgba(activeProfile.primaryColor, 0.08)
-                        : 'rgba(59, 130, 246, 0.08)',
-                      borderColor: activeProfile
-                        ? hexToRgba(activeProfile.primaryColor, 0.3)
-                        : '#93c5fd',
-                      color: activeProfile?.primaryColor || '#2563eb',
-                    }}
-                    className={metricCardStyle}
+                    className={cx(metricCardStyle, css({ backgroundColor: 'brand.50', borderColor: 'brand.200', color: 'brand.700' }))}
                   >
                     <div className={metricLabelStyle}>
                       <Wallet size={12} />
-                      <span>Líquido a Receber</span>
+                      <span>Líquido no Holerite</span>
                     </div>
                     <div className={metricValueStyle}>
-                      {formatCurrency(dynamicNet)}
+                      {formatCurrency(parsedData?.netAmount || 0)}
                     </div>
                   </div>
                 </div>
 
-                {/* 2. Seletor de Estratégia de Lançamento */}
+                {/* 2. Banner de Destaque Inteligente de Adiantamento Quinzenal */}
+                {hasAdvance && (
+                  <div className={advanceBannerStyle}>
+                    <div className={css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between' })}>
+                      <div className={css({ display: 'flex', alignItems: 'center', gap: '2' })}>
+                        <Sparkles size={16} className={css({ color: 'brand.primary' })} />
+                        <span className={css({ fontSize: 'xs', fontWeight: 'bold', color: 'slate.900' })}>
+                          Adiantamento Quinzenal Identificado
+                        </span>
+                      </div>
+                      <span className={advancePillStyle}>
+                        Recebido no Dia 20
+                      </span>
+                    </div>
+
+                    <p className={css({ fontSize: 'xs', color: 'slate.600', margin: '0' })}>
+                      O sistema identificou o <strong>DESC.ADIANTAMENTO SALARIAL</strong> de{' '}
+                      <strong>{formatCurrency(advanceAmount)}</strong> como a quinzena recebida no dia 20.
+                      Somado ao saldo líquido de <strong>{formatCurrency(netBalanceAmount)}</strong> no 5º dia útil,
+                      seu total líquido em conta no mês é de{' '}
+                      <strong className={css({ color: 'brand.primary' })}>
+                        {formatCurrency(advanceAmount + netBalanceAmount)}
+                      </strong>.
+                    </p>
+                  </div>
+                )}
+
+                {/* 3. Seletor de Estratégia de Lançamento */}
                 <div className={modeSelectorContainerStyle}>
                   <button
                     type="button"
@@ -1166,10 +1209,15 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                       modeButtonStyle,
                       importMode === 'net' ? modeButtonActiveStyle : modeButtonInactiveStyle
                     )}
+                    aria-pressed={importMode === 'net'}
                     onClick={() => setImportMode('net')}
                   >
-                    <Wallet size={14} />
-                    <span>Modo 1: Apenas Salário Líquido</span>
+                    <Coins size={14} />
+                    <span>
+                      {hasAdvance
+                        ? 'Modo 1: Entradas Líquidas (Quinzena + Saldo)'
+                        : 'Modo 1: Apenas Salário Líquido'}
+                    </span>
                   </button>
 
                   <button
@@ -1178,14 +1226,15 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                       modeButtonStyle,
                       importMode === 'detailed' ? modeButtonActiveStyle : modeButtonInactiveStyle
                     )}
+                    aria-pressed={importMode === 'detailed'}
                     onClick={() => setImportMode('detailed')}
                   >
                     <Layers size={14} />
-                    <span>Modo 2: Detalhado (Bruto + Descontos)</span>
+                    <span>Modo 2: Rubricas Detalhadas (Vencimentos)</span>
                   </button>
                 </div>
 
-                {/* CONTEÚDO MODO 1: APENAS SALÁRIO LÍQUIDO */}
+                {/* CONTEÚDO MODO 1: ENTRADAS LÍQUIDAS REAIS EM CONTA */}
                 {importMode === 'net' && (
                   <div
                     className={css({
@@ -1197,92 +1246,270 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                       backgroundColor: 'slate.50',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '3.5',
+                      gap: '4',
                     })}
                   >
-                    <div className={css({ display: 'flex', alignItems: 'center', gap: '2' })}>
-                      <Sparkles size={16} className={css({ color: 'brand.primary' })} />
-                      <span className={css({ fontSize: 'xs', fontWeight: 'bold', color: 'slate.800' })}>
-                        Lançamento Único Simplificado
-                      </span>
-                    </div>
-                    <p className={css({ fontSize: 'xs', color: 'slate.600' })}>
-                      Será registrada uma única receita com a quantia final creditada em conta,
-                      sem desmembrar INSS, impostos ou deduções individuais no fluxo.
-                    </p>
+                    {hasAdvance ? (
+                      <>
+                        <div className={css({ display: 'flex', flexDirection: 'column', gap: '1' })}>
+                          <span className={css({ fontSize: 'xs', fontWeight: 'bold', color: 'slate.800' })}>
+                            Lançamento das Entradas em Conta por Data
+                          </span>
+                          <p className={css({ fontSize: 'xs', color: 'slate.500', margin: '0' })}>
+                            Registre as duas entradas de dinheiro que caem na sua conta bancária nos dias respectivos:
+                          </p>
+                        </div>
 
-                    <div
-                      className={css({
-                        display: 'grid',
-                        gridTemplateColumns: { base: '1fr', sm: '2fr 1fr 1fr' },
-                        gap: '3',
-                      })}
-                    >
-                      <Input
-                        label="Descrição da Receita"
-                        size="sm"
-                        value={netDescription}
-                        onChange={(e) => setNetDescription(e.target.value)}
-                        placeholder="Ex: Salário Empresa X"
-                        required
-                      />
+                        {/* Parcela 1: Adiantamento Quinzenal (Dia 20) */}
+                        <div
+                          className={css({
+                            padding: '3',
+                            borderRadius: 'lg',
+                            backgroundColor: 'bgCard',
+                            borderWidth: '1px',
+                            borderStyle: 'solid',
+                            borderColor: 'slate.200',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '2.5',
+                          })}
+                        >
+                          <div className={css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between' })}>
+                            <label className={css({ display: 'flex', alignItems: 'center', gap: '2', cursor: 'pointer', fontSize: 'xs', fontWeight: 'bold', color: 'slate.800' })}>
+                              <input
+                                type="checkbox"
+                                checked={includeAdvance}
+                                onChange={(e) => setIncludeAdvance(e.target.checked)}
+                                className={css({ accentColor: 'brand.primary' })}
+                              />
+                              <span>1. Quinzena (Adiantamento no Dia 20)</span>
+                            </label>
+                            <span className={advancePillStyle}>
+                              <Clock size={10} /> Dia 20
+                            </span>
+                          </div>
 
-                      <Input
-                        label="Valor Líquido (R$)"
-                        type="number"
-                        step="0.01"
-                        min="0.01"
-                        size="sm"
-                        value={netAmount || ''}
-                        onChange={(e) => setNetAmount(parseFloat(e.target.value) || 0)}
-                        required
-                      />
+                          <div
+                            className={css({
+                              display: 'grid',
+                              gridTemplateColumns: { base: '1fr', sm: '2fr 1.2fr 1.2fr' },
+                              gap: '2.5',
+                              opacity: includeAdvance ? '1' : '0.4',
+                            })}
+                          >
+                            <Input
+                              label="Descrição"
+                              size="sm"
+                              value={advanceDescription}
+                              disabled={!includeAdvance}
+                              onChange={(e) => setAdvanceDescription(e.target.value)}
+                            />
 
-                      <Select
-                        label="Categoria"
-                        size="sm"
-                        value={netCategory}
-                        onChange={(e) => setNetCategory(e.target.value as TransactionCategory)}
+                            <Input
+                              label="Valor (R$)"
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              size="sm"
+                              value={advanceAmount || ''}
+                              disabled={!includeAdvance}
+                              onChange={(e) => setAdvanceAmount(parseFloat(e.target.value) || 0)}
+                            />
+
+                            <div className={css({ display: 'flex', flexDirection: 'column', gap: '1.5' })}>
+                              <label className={css({ fontSize: 'sm', fontWeight: 'medium', color: 'slate.700' })}>
+                                Data Recebimento
+                              </label>
+                              <input
+                                type="date"
+                                value={advanceDate}
+                                disabled={!includeAdvance}
+                                onChange={(e) => setAdvanceDate(e.target.value)}
+                                className={tableInputStyle}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Parcela 2: Saldo de Salário Líquido (5º dia útil) */}
+                        <div
+                          className={css({
+                            padding: '3',
+                            borderRadius: 'lg',
+                            backgroundColor: 'bgCard',
+                            borderWidth: '1px',
+                            borderStyle: 'solid',
+                            borderColor: 'slate.200',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '2.5',
+                          })}
+                        >
+                          <div className={css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between' })}>
+                            <label className={css({ display: 'flex', alignItems: 'center', gap: '2', cursor: 'pointer', fontSize: 'xs', fontWeight: 'bold', color: 'slate.800' })}>
+                              <input
+                                type="checkbox"
+                                checked={includeNetBalance}
+                                onChange={(e) => setIncludeNetBalance(e.target.checked)}
+                                className={css({ accentColor: 'brand.primary' })}
+                              />
+                              <span>2. Saldo de Salário (5º Dia Útil)</span>
+                            </label>
+                            <span className={css({ fontSize: '2xs', fontWeight: 'bold', color: 'slate.600', backgroundColor: 'slate.100', paddingX: '1.5', paddingY: '0.5', borderRadius: 'md' })}>
+                              5º Dia Útil
+                            </span>
+                          </div>
+
+                          <div
+                            className={css({
+                              display: 'grid',
+                              gridTemplateColumns: { base: '1fr', sm: '2fr 1.2fr 1.2fr' },
+                              gap: '2.5',
+                              opacity: includeNetBalance ? '1' : '0.4',
+                            })}
+                          >
+                            <Input
+                              label="Descrição"
+                              size="sm"
+                              value={netBalanceDescription}
+                              disabled={!includeNetBalance}
+                              onChange={(e) => setNetBalanceDescription(e.target.value)}
+                            />
+
+                            <Input
+                              label="Valor (R$)"
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              size="sm"
+                              value={netBalanceAmount || ''}
+                              disabled={!includeNetBalance}
+                              onChange={(e) => setNetBalanceAmount(parseFloat(e.target.value) || 0)}
+                            />
+
+                            <div className={css({ display: 'flex', flexDirection: 'column', gap: '1.5' })}>
+                              <label className={css({ fontSize: 'sm', fontWeight: 'medium', color: 'slate.700' })}>
+                                Data Recebimento
+                              </label>
+                              <input
+                                type="date"
+                                value={netBalanceDate}
+                                disabled={!includeNetBalance}
+                                onChange={(e) => setNetBalanceDate(e.target.value)}
+                                className={tableInputStyle}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      /* Caso sem adiantamento salarial: Entrada única simples */
+                      <div
+                        className={css({
+                          display: 'grid',
+                          gridTemplateColumns: { base: '1fr', sm: '2fr 1fr 1fr' },
+                          gap: '3',
+                        })}
                       >
-                        <option value="fixed">Fixa (Salário Mensal)</option>
-                        <option value="recurring">Recorrente</option>
-                        <option value="daily">Cotidiana</option>
-                      </Select>
-                    </div>
+                        <Input
+                          label="Descrição da Receita"
+                          size="sm"
+                          value={netBalanceDescription}
+                          onChange={(e) => setNetBalanceDescription(e.target.value)}
+                          placeholder="Ex: Salário Líquido"
+                          required
+                        />
+
+                        <Input
+                          label="Valor Líquido (R$)"
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          size="sm"
+                          value={netBalanceAmount || ''}
+                          onChange={(e) => setNetBalanceAmount(parseFloat(e.target.value) || 0)}
+                          required
+                        />
+
+                        <div className={css({ display: 'flex', flexDirection: 'column', gap: '1.5' })}>
+                          <label className={css({ fontSize: 'sm', fontWeight: 'medium', color: 'slate.700' })}>
+                            Data de Recebimento
+                          </label>
+                          <input
+                            type="date"
+                            value={netBalanceDate}
+                            onChange={(e) => setNetBalanceDate(e.target.value)}
+                            className={tableInputStyle}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* CONTEÚDO MODO 2: TABELA EDITÁVEL DETALHADA */}
+                {/* CONTEÚDO MODO 2: TABELA DE RUBRICAS DETALHADAS */}
                 {importMode === 'detailed' && (
                   <div className={css({ display: 'flex', flexDirection: 'column', gap: '3' })}>
                     <div className={tableContainerStyle}>
                       <div className={tableHeaderBarStyle}>
+                        {/* Seletor de visualização (Apenas Receitas vs Todas) */}
                         <div className={css({ display: 'flex', alignItems: 'center', gap: '2' })}>
-                          <input
-                            type="checkbox"
-                            checked={allSelected}
-                            ref={(el) => {
-                              if (el) el.indeterminate = someSelected;
-                            }}
-                            onChange={toggleSelectAll}
-                            className={css({ cursor: 'pointer', accentColor: 'brand.primary' })}
-                          />
-                          <span>Selecionar todos os itens do contracheque</span>
+                          <button
+                            type="button"
+                            aria-pressed={tableFilter === 'incomes_only'}
+                            onClick={() => setTableFilter('incomes_only')}
+                            className={css({
+                              paddingX: '2.5',
+                              paddingY: '1',
+                              borderRadius: 'md',
+                              fontSize: '2xs',
+                              fontWeight: 'bold',
+                              border: 'none',
+                              cursor: 'pointer',
+                              backgroundColor: tableFilter === 'incomes_only' ? 'brand.primary' : 'slate.200',
+                              color: tableFilter === 'incomes_only' ? 'white' : 'slate.700',
+                              transition: 'all 0.15s ease',
+                            })}
+                          >
+                            Apenas Receitas ({items.filter((i) => i.type === 'income').length})
+                          </button>
+
+                          <button
+                            type="button"
+                            aria-pressed={tableFilter === 'all'}
+                            onClick={() => setTableFilter('all')}
+                            className={css({
+                              paddingX: '2.5',
+                              paddingY: '1',
+                              borderRadius: 'md',
+                              fontSize: '2xs',
+                              fontWeight: 'bold',
+                              border: 'none',
+                              cursor: 'pointer',
+                              backgroundColor: tableFilter === 'all' ? 'brand.primary' : 'slate.200',
+                              color: tableFilter === 'all' ? 'white' : 'slate.700',
+                              transition: 'all 0.15s ease',
+                            })}
+                          >
+                            Todas as Rubricas ({items.length})
+                          </button>
                         </div>
 
-                        <span
-                          className={css({
-                            fontSize: '2xs',
-                            fontWeight: 'bold',
-                            paddingX: '2',
-                            paddingY: '0.5',
-                            borderRadius: 'full',
-                            backgroundColor: 'slate.200',
-                            color: 'slate.700',
-                          })}
-                        >
-                          {items.filter((i) => i.selected).length} de {items.length} selecionados
-                        </span>
+                        {/* Checkbox selecionar todos do filtro atual */}
+                        <div className={css({ display: 'flex', alignItems: 'center', gap: '2' })}>
+                          <label className={css({ display: 'flex', alignItems: 'center', gap: '1.5', cursor: 'pointer', fontSize: '2xs', color: 'slate.600' })}>
+                            <input
+                              type="checkbox"
+                              checked={allVisibleSelected}
+                              ref={(el) => {
+                                if (el) el.indeterminate = someVisibleSelected;
+                              }}
+                              onChange={toggleSelectAllVisible}
+                              className={css({ cursor: 'pointer', accentColor: 'brand.primary' })}
+                            />
+                            <span>Selecionar todas ({visibleItems.filter((i) => i.selected).length}/{visibleItems.length})</span>
+                          </label>
+                        </div>
                       </div>
 
                       <div className={tableScrollWrapperStyle}>
@@ -1291,15 +1518,15 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                             <tr>
                               <th className={tableThStyle} style={{ width: '32px' }}></th>
                               <th className={tableThStyle}>Descrição</th>
+                              <th className={tableThStyle} style={{ width: '80px' }}>Ref.</th>
                               <th className={tableThStyle} style={{ width: '100px' }}>Tipo</th>
-                              <th className={tableThStyle} style={{ width: '130px' }}>Categoria</th>
-                              <th className={tableThStyle} style={{ width: '140px' }}>Parcelas</th>
-                              <th className={tableThStyle} style={{ width: '120px' }}>Valor (R$)</th>
+                              <th className={tableThStyle} style={{ width: '120px' }}>Categoria</th>
+                              <th className={tableThStyle} style={{ width: '120px', textAlign: 'right' }}>Valor (R$)</th>
                               <th className={tableThStyle} style={{ width: '36px' }}></th>
                             </tr>
                           </thead>
                           <tbody>
-                            {items.map((item) => {
+                            {visibleItems.map((item) => {
                               const isParcelada = item.category === 'installment';
 
                               return (
@@ -1322,16 +1549,30 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
 
                                   {/* Descrição */}
                                   <td className={tableTdStyle}>
-                                    <input
-                                      type="text"
-                                      value={item.description}
-                                      disabled={!item.selected}
-                                      onChange={(e) =>
-                                        updateItemField(item.tempId, 'description', e.target.value)
-                                      }
-                                      className={tableInputStyle}
-                                      placeholder="Nome da rubrica"
-                                    />
+                                    <div className={css({ display: 'flex', alignItems: 'center', gap: '1.5' })}>
+                                      <input
+                                        type="text"
+                                        value={item.description}
+                                        disabled={!item.selected}
+                                        onChange={(e) =>
+                                          updateItemField(item.tempId, 'description', e.target.value)
+                                        }
+                                        className={tableInputStyle}
+                                        placeholder="Nome da rubrica"
+                                      />
+                                      {item.isAdvance && (
+                                        <span className={advancePillStyle} title="Adiantamento quinzenal no dia 20">
+                                          Quinzena
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+
+                                  {/* Referência (Horas / % / Dias) */}
+                                  <td className={tableTdStyle}>
+                                    <span className={css({ fontSize: '2xs', color: 'slate.500', fontWeight: 'medium' })}>
+                                      {item.reference || '—'}
+                                    </span>
                                   </td>
 
                                   {/* Tipo (Entrada ou Desconto) */}
@@ -1355,94 +1596,33 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
 
                                   {/* Categoria */}
                                   <td className={tableTdStyle}>
-                                    <select
-                                      value={item.category}
-                                      disabled={!item.selected}
-                                      onChange={(e) =>
-                                        updateItemField(
-                                          item.tempId,
-                                          'category',
-                                          e.target.value as TransactionCategory
-                                        )
-                                      }
-                                      className={tableSelectStyle}
-                                    >
-                                      <option value="fixed">Fixa</option>
-                                      <option value="recurring">Recorrente</option>
-                                      <option value="installment">Parcelada</option>
-                                      <option value="daily">Cotidiana</option>
-                                    </select>
-                                  </td>
-
-                                  {/* Parcelas (Se categoria === installment) */}
-                                  <td className={tableTdStyle}>
-                                    {isParcelada ? (
-                                      <div
-                                        className={css({
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          gap: '1',
-                                        })}
+                                    <div className={css({ display: 'flex', flexDirection: 'column', gap: '1' })}>
+                                      <select
+                                        value={item.category}
+                                        disabled={!item.selected}
+                                        onChange={(e) =>
+                                          updateItemField(
+                                            item.tempId,
+                                            'category',
+                                            e.target.value as TransactionCategory
+                                          )
+                                        }
+                                        className={tableSelectStyle}
                                       >
+                                        <option value="fixed">Fixa</option>
+                                        <option value="recurring">Recorrente</option>
+                                        <option value="installment">Parcelada</option>
+                                        <option value="daily">Cotidiana</option>
+                                      </select>
+                                      {isParcelada && (
                                         <div className={installmentBadgeStyle}>
                                           <CreditCard size={10} />
-                                          <span>Parc.</span>
+                                          <span>
+                                            Parc. {item.currentInstallment || 1}/{item.totalInstallments || 12}
+                                          </span>
                                         </div>
-                                        <input
-                                          type="number"
-                                          min="1"
-                                          value={item.currentInstallment || 1}
-                                          disabled={!item.selected}
-                                          onChange={(e) =>
-                                            updateItemField(
-                                              item.tempId,
-                                              'currentInstallment',
-                                              parseInt(e.target.value, 10) || 1
-                                            )
-                                          }
-                                          className={css({
-                                            width: '10',
-                                            height: '7',
-                                            textAlign: 'center',
-                                            fontSize: '2xs',
-                                            borderRadius: 'md',
-                                            borderWidth: '1px',
-                                            borderStyle: 'solid',
-                                            borderColor: 'slate.200',
-                                          })}
-                                        />
-                                        <span className={css({ fontSize: 'xs', color: 'slate.400' })}>
-                                          /
-                                        </span>
-                                        <input
-                                          type="number"
-                                          min="1"
-                                          value={item.totalInstallments || 12}
-                                          disabled={!item.selected}
-                                          onChange={(e) =>
-                                            updateItemField(
-                                              item.tempId,
-                                              'totalInstallments',
-                                              parseInt(e.target.value, 10) || 1
-                                            )
-                                          }
-                                          className={css({
-                                            width: '10',
-                                            height: '7',
-                                            textAlign: 'center',
-                                            fontSize: '2xs',
-                                            borderRadius: 'md',
-                                            borderWidth: '1px',
-                                            borderStyle: 'solid',
-                                            borderColor: 'slate.200',
-                                          })}
-                                        />
-                                      </div>
-                                    ) : (
-                                      <span className={css({ fontSize: 'xs', color: 'slate.400', pl: '1' })}>
-                                        —
-                                      </span>
-                                    )}
+                                      )}
+                                    </div>
                                   </td>
 
                                   {/* Valor (R$) */}
@@ -1460,8 +1640,8 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                                           parseFloat(e.target.value) || 0
                                         )
                                       }
-                                      className={tableInputStyle}
-                                      placeholder="0.00"
+                                      className={cx(tableInputStyle, css({ textAlign: 'right' }))}
+                                      placeholder="0,00"
                                     />
                                   </td>
 
@@ -1512,7 +1692,7 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                       })}
                     >
                       <PlusCircle size={14} />
-                      <span>+ Nova Fonte / Desconto Manual</span>
+                      <span>+ Nova Fonte Manual</span>
                     </Button>
                   </div>
                 )}
@@ -1540,35 +1720,9 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                 )}
               </div>
 
-              {/* 4. Rodapé da Coluna Direita: Data, Projeção e Gravação em Lote */}
+              {/* 4. Rodapé da Coluna Direita: Projeção e Gravação em Lote */}
               <div className={footerStyle}>
                 <div className={footerControlsStyle}>
-                  {/* Seletor de Data de Recebimento */}
-                  <div className={css({ display: 'flex', flexDirection: 'column', gap: '1' })}>
-                    <label className={css({ fontSize: '2xs', fontWeight: 'bold', color: 'slate.600', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '1' })}>
-                      <Calendar size={12} className={css({ color: 'slate.500' })} />
-                      <span>Data de Recebimento</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={receiptDate}
-                      onChange={(e) => setReceiptDate(e.target.value)}
-                      className={css({
-                        height: '8',
-                        paddingX: '2',
-                        fontSize: 'xs',
-                        borderRadius: 'md',
-                        borderWidth: '1px',
-                        borderStyle: 'solid',
-                        borderColor: 'slate.200',
-                        backgroundColor: 'white',
-                        color: 'slate.800',
-                        outline: 'none',
-                        _focus: { borderColor: 'brand.primary' },
-                      })}
-                    />
-                  </div>
-
                   {/* Projetar itens fixos para os próximos X meses */}
                   <div className={css({ display: 'flex', flexDirection: 'column', gap: '1' })}>
                     <label className={css({ fontSize: '2xs', fontWeight: 'bold', color: 'slate.600', textTransform: 'uppercase' })}>
@@ -1585,7 +1739,7 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                         borderWidth: '1px',
                         borderStyle: 'solid',
                         borderColor: 'slate.200',
-                        backgroundColor: 'white',
+                        backgroundColor: 'bgCard',
                         color: 'slate.800',
                         outline: 'none',
                         cursor: 'pointer',
@@ -1616,11 +1770,6 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                     size="sm"
                     disabled={isSubmitting}
                     onClick={handleSaveBatch}
-                    style={{
-                      background: activeProfile
-                        ? `linear-gradient(135deg, ${activeProfile.primaryColor}, ${activeProfile.secondaryColor})`
-                        : undefined,
-                    }}
                     className={css({
                       display: 'flex',
                       alignItems: 'center',
@@ -1628,7 +1777,6 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
                       height: '9',
                       paddingX: '4',
                       fontWeight: 'bold',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
                     })}
                   >
                     {isSubmitting ? (
@@ -1649,7 +1797,7 @@ export const PayslipImportModal: React.FC<PayslipImportModalProps> = ({
           </div>
         )}
       </div>
-    </div>
+    </ModalLayer>
   );
 };
 

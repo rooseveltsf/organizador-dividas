@@ -43,94 +43,30 @@ export function parseBrazilianCurrency(str: string): number {
   return parseFloat(clean) || 0;
 }
 
-const INCOME_KEYWORDS = [
-  'salario',
-  'salário',
-  'base',
-  'provento',
-  'vencimento',
-  'hora extra',
-  'horas extras',
-  'adicional',
-  'noturno',
-  'insalubridade',
-  'periculosidade',
-  'gratificacao',
-  'gratificação',
-  'comissao',
-  'comissão',
-  '13',
-  'decimo terceiro',
-  'décimo terceiro',
-  'ferias',
-  'férias',
-  'dsr',
-  'premio',
-  'prêmio',
-  'abono',
-  'diaria',
-  'diária',
-  'bonificacao',
-  'bonificação',
-  'produtividade',
-  'anuênio',
-  'anuenio',
-  'triênio',
-  'trienio',
-  'quinquênio',
-  'quinquenio',
-  'ajuda de custo',
-  'auxilio',
-  'auxílio',
-];
+/**
+ * Retorna o 5º dia útil do mês seguinte no formato YYYY-MM-DD
+ */
+export function getNextMonthDate(refMonthStr?: string, day: number = 5): string {
+  if (!refMonthStr || !refMonthStr.includes('-')) {
+    const now = new Date();
+    const nextDate = new Date(now.getFullYear(), now.getMonth() + 1, day);
+    const y = nextDate.getFullYear();
+    const m = String(nextDate.getMonth() + 1).padStart(2, '0');
+    const d = String(day).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
 
-const EXPENSE_KEYWORDS = [
-  'inss',
-  'irrf',
-  'imposto de renda',
-  'previdencia',
-  'previdência',
-  'vale transporte',
-  'vt',
-  'vale refeicao',
-  'vale alimentação',
-  'vale alimentacao',
-  'vale refeição',
-  'vr',
-  'va',
-  'plano de saude',
-  'plano de saúde',
-  'odonto',
-  'odontologico',
-  'odontológico',
-  'unimed',
-  'bradesco saude',
-  'sulamerica',
-  'amil',
-  'coparticipacao',
-  'coparticipação',
-  'sindicato',
-  'sindical',
-  'contribuicao',
-  'contribuição',
-  'mensalidade',
-  'falta',
-  'faltas',
-  'atraso',
-  'atrasos',
-  'consignado',
-  'consignacao',
-  'consignação',
-  'emprestimo',
-  'empréstimo',
-  'pensao',
-  'pensão',
-  'adiantamento',
-  'farmacia',
-  'farmácia',
-  'seguro de vida',
-  'desconto',
-];
+  const parts = refMonthStr.split('-');
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10); // 1 a 12
+
+  // Em JavaScript Date, month 0 = Jan, portanto 'month' equivale ao próximo mês
+  const nextDate = new Date(year, month, day);
+  const nextY = nextDate.getFullYear();
+  const nextM = String(nextDate.getMonth() + 1).padStart(2, '0');
+  const nextD = String(day).padStart(2, '0');
+  return `${nextY}-${nextM}-${nextD}`;
+}
 
 const MONTH_NAMES: { [key: string]: string } = {
   janeiro: '01',
@@ -160,6 +96,9 @@ const MONTH_NAMES: { [key: string]: string } = {
   dez: '12',
 };
 
+const INSTALLMENT_REGEX =
+  /(?:parc(?:ela)?\.?|prest(?:a[cç][aã]o)?\.?)?\s*(\d{1,3})\s*[\/|\\]\s*(\d{1,3})/i;
+
 export class PayslipPdfParserService {
   /**
    * Processa o buffer binário de um arquivo PDF de contracheque
@@ -183,233 +122,240 @@ export class PayslipPdfParserService {
       const page = await doc.getPage(pageNum);
       const textContent = await page.getTextContent();
 
-      const fragments: TextFragment[] = [];
+      const linesMap: { [key: string]: { y: number; fragments: TextFragment[] } } = {};
 
       for (const item of textContent.items) {
         if ('str' in item && typeof item.str === 'string') {
           const trimmed = item.str.trim();
           if (!trimmed) continue;
 
-          fragments.push({
-            text: item.str,
-            x: item.transform[4],
-            y: item.transform[5],
+          const y = Math.round(item.transform[5] * 10) / 10;
+          const foundY = Object.keys(linesMap).find((k) => Math.abs(Number(k) - y) <= 2.8);
+          const key = foundY || String(y);
+
+          if (!linesMap[key]) {
+            linesMap[key] = { y: Number(key), fragments: [] };
+          }
+
+          linesMap[key].fragments.push({
+            text: item.str.trim(),
+            x: Math.round(item.transform[4] * 10) / 10,
+            y,
             width: item.width,
             height: item.height,
           });
         }
       }
 
-      // 2. Reconstrução de Linhas Tabulares (Tolerância Y de 3 pontos)
-      // Agrupa fragmentos horizontais próximos e ordena cada linha por X crescente
-      fragments.sort((a, b) => b.y - a.y); // Do topo para a base da página
+      // Ordena linhas por Y descendente (do topo ao rodapé)
+      const sortedPageLines = Object.values(linesMap).sort((a, b) => b.y - a.y);
 
-      const pageLines: ParsedLine[] = [];
-
-      for (const frag of fragments) {
-        let line = pageLines.find((l) => Math.abs(l.y - frag.y) <= 3);
-        if (!line) {
-          line = {
-            y: frag.y,
-            fragments: [],
-            text: '',
-          };
-          pageLines.push(line);
-        }
-        line.fragments.push(frag);
-      }
-
-      // Ordena fragmentos da esquerda para a direita (coordenada X)
-      for (const line of pageLines) {
+      for (const line of sortedPageLines) {
+        // Ordena fragmentos por X ascendente (da esquerda para a direita)
         line.fragments.sort((a, b) => a.x - b.x);
-        line.text = line.fragments.map((f) => f.text.trim()).join(' ');
+        allLines.push({
+          y: line.y,
+          fragments: line.fragments,
+          text: line.fragments.map((f) => f.text).join(' '),
+        });
       }
-
-      // Ordena as linhas do topo para o rodapé
-      pageLines.sort((a, b) => b.y - a.y);
-      allLines.push(...pageLines);
     }
 
-    const rawTextPreview = allLines.map((l) => l.text).join('\n');
+    // 2. Isolamento da 1ª Via (Deduplicação de holerites com 2 vias na mesma página)
+    // Em contracheques brasileiros clássicos, a página é dividida em 2 vias idênticas.
+    // Assim que ultrapassamos o rodapé da 1ª via (onde há 'Salário Base' ou 'Valor Líquido'),
+    // se reaparece um cabeçalho de empresa ('CNPJ:', 'Folha Mensal', 'Código Nome do Funcionário'), encerra a 1ª via.
+    const viaLines: ParsedLine[] = [];
+    let passedFirstViaFooter = false;
 
-    // 3. Detecção de Coordenadas X das Colunas de Vencimentos e Descontos
-    let proventosHeaderX: number | null = null;
-    let descontosHeaderX: number | null = null;
-
-    for (const line of allLines) {
-      for (const frag of line.fragments) {
-        const lower = frag.text.toLowerCase();
-        if (
-          lower.includes('vencimento') ||
-          lower.includes('provento') ||
-          lower.includes('crédito') ||
-          lower.includes('credito')
-        ) {
-          proventosHeaderX = frag.x;
-        } else if (
-          lower.includes('desconto') ||
-          lower.includes('débito') ||
-          lower.includes('debito') ||
-          lower.includes('dedução') ||
-          lower.includes('deducao')
-        ) {
-          descontosHeaderX = frag.x;
-        }
+    for (const l of allLines) {
+      const lower = l.text.toLowerCase();
+      if (
+        passedFirstViaFooter &&
+        (lower.includes('cnpj:') ||
+          lower.includes('folha mensal') ||
+          lower.includes('código nome do funcionário') ||
+          (lower.includes('recibo') && lower.includes('pagamento')))
+      ) {
+        break; // Interrompe a leitura na fronteira da 2ª via para evitar duplicação!
       }
-      if (proventosHeaderX !== null && descontosHeaderX !== null) {
+
+      viaLines.push(l);
+
+      if (lower.includes('salário base') || lower.includes('salario base') || lower.includes('valor líquido') || lower.includes('valor liquido')) {
+        passedFirstViaFooter = true;
+      }
+    }
+
+    const rawTextPreview = viaLines.map((l) => l.text).join('\n');
+
+    // 3. Identificação do Empregador (Razão Social)
+    let employerName: string | undefined;
+    for (const line of viaLines.slice(0, 8)) {
+      const upper = line.text.toUpperCase();
+      if (
+        upper.includes('LTDA') ||
+        upper.includes('S.A') ||
+        upper.includes('S/A') ||
+        upper.includes('EIRELI') ||
+        upper.includes('EPP') ||
+        upper.includes('ME') ||
+        upper.includes('INSTITUTO') ||
+        upper.includes('HOSPITAL') ||
+        upper.includes('PREFEITURA')
+      ) {
+        employerName = line.text.trim();
         break;
       }
     }
 
-    // Ponto médio divisor caso as duas colunas tenham sido localizadas
-    const columnSplitX =
-      proventosHeaderX !== null && descontosHeaderX !== null
-        ? (proventosHeaderX + descontosHeaderX) / 2
-        : null;
-
-    // 4. Detecção de Empregador e Mês de Referência (Competência)
-    let employerName: string | undefined;
+    // 4. Identificação do Mês de Referência (Competência)
+    // Dá prioridade estrita para "Folha Mensal", "Competência", "Mês/Ano"
+    // e EXCLUI explicitamente linhas de data de admissão ("Admissão: 25/01/2021")
     let referenceMonth: string | undefined;
 
-    // Busca Mês de Referência (YYYY-MM)
-    const monthRegexPattern =
-      /(?:compet[eê]ncia|m[eê]s(?:\/ano)?|per[ií]odo|ref(?:\.|er[eê]ncia)?)\s*[:=]?\s*(\d{1,2})[\/\-](\d{4})/i;
-    const monthNamePattern =
-      /(?:compet[eê]ncia|m[eê]s(?:\/ano)?|per[ií]odo|ref(?:\.|er[eê]ncia)?)\s*[:=]?\s*([a-zç]+)[\/\s]+(?:de\s+)?(\d{4})/i;
-    const genericMonthYearPattern = /\b(0[1-9]|1[0-2])[\/\-](20\d{2})\b/;
-
-    for (const line of allLines.slice(0, 20)) {
-      const matchComp = line.text.match(monthRegexPattern);
-      if (matchComp) {
-        const m = matchComp[1].padStart(2, '0');
-        const y = matchComp[2];
-        referenceMonth = `${y}-${m}`;
-        break;
+    for (const line of viaLines.slice(0, 15)) {
+      if (line.text.toLowerCase().includes('admissão') || line.text.toLowerCase().includes('admissao')) {
+        continue; // Ignora linha de admissão para não capturar ano incorreto!
       }
 
-      const matchName = line.text.match(monthNamePattern);
-      if (matchName) {
-        const monthKey = matchName[1].toLowerCase();
+      // Ex: "Folha Mensal Julho de 2026" ou "Julho de 2026"
+      const matchMonthName = line.text.match(
+        /(?:folha\s+mensal|compet[eê]ncia|per[ií]odo|m[eê]s|ref(?:\.|er[eê]ncia)?)?\s*([a-zç]+)\s+de\s+(\d{4})/i
+      );
+      if (matchMonthName) {
+        const monthKey = matchMonthName[1].toLowerCase();
         if (MONTH_NAMES[monthKey]) {
-          referenceMonth = `${matchName[2]}-${MONTH_NAMES[monthKey]}`;
+          referenceMonth = `${matchMonthName[2]}-${MONTH_NAMES[monthKey]}`;
           break;
         }
       }
 
-      const matchGeneric = line.text.match(genericMonthYearPattern);
-      if (matchGeneric && !referenceMonth) {
-        referenceMonth = `${matchGeneric[2]}-${matchGeneric[1]}`;
-      }
-    }
-
-    // Busca Nome da Empresa/Empregador no topo do documento
-    const employerLabelPattern = /(?:empresa|empregador|raz[aã]o\s+social)\s*[:=]?\s*(.+)/i;
-    for (const line of allLines.slice(0, 10)) {
-      const matchEmp = line.text.match(employerLabelPattern);
-      if (matchEmp) {
-        employerName = matchEmp[1].trim();
+      // Ex: "Competência: 07/2026" ou "07/2026"
+      const matchMonthNum = line.text.match(
+        /(?:folha\s+mensal|compet[eê]ncia|per[ií]odo|m[eê]s|ref(?:\.|er[eê]ncia)?)\s*[:=]?\s*(0[1-9]|1[0-2])[\/\-](\d{4})/i
+      );
+      if (matchMonthNum) {
+        referenceMonth = `${matchMonthNum[2]}-${matchMonthNum[1].padStart(2, '0')}`;
         break;
       }
     }
 
-    if (!employerName && allLines.length > 0) {
-      // Tenta usar a primeira ou segunda linha não vazia que contenha características de razão social
-      for (const line of allLines.slice(0, 4)) {
-        const upper = line.text.toUpperCase();
-        if (
-          upper.includes('LTDA') ||
-          upper.includes('S.A') ||
-          upper.includes('S/A') ||
-          upper.includes('EIRELI') ||
-          upper.includes('EPP') ||
-          upper.includes('ME') ||
-          upper.includes('INSTITUTO') ||
-          upper.includes('HOSPITAL') ||
-          upper.includes('PREFEITURA')
-        ) {
-          employerName = line.text.trim();
+    // Fallback de competência caso não encontrada com rótulos
+    if (!referenceMonth) {
+      for (const line of viaLines.slice(0, 10)) {
+        if (line.text.toLowerCase().includes('admissão') || line.text.toLowerCase().includes('admissao')) {
+          continue;
+        }
+        const genericMatch = line.text.match(/\b(0[1-9]|1[0-2])[\/\-](20\d{2})\b/);
+        if (genericMatch) {
+          referenceMonth = `${genericMatch[2]}-${genericMatch[1]}`;
           break;
         }
       }
     }
 
-    // 5. Extração de Itens da Tabela (Rubricas)
-    const items: PayslipExtractedItem[] = [];
-    const CURRENCY_REGEX = /\b(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})\b/g;
-    const INSTALLMENT_REGEX = /(?:parc(?:ela)?\.?|prest(?:a[cç][aã]o)?\.?)?\s*(\d{1,3})\s*[\/|\\]\s*(\d{1,3})/i;
+    // 5. Detecção das Coordenadas X das Colunas da Tabela
+    let refX: number | null = null;
+    let vencX: number | null = null;
+    let descX: number | null = null;
 
-    // Linhas que não são rubricas (cabeçalhos, rodapés de totais, dados cadastrais)
-    const isIgnoreLine = (text: string): boolean => {
-      const lower = text.toLowerCase();
+    for (const line of viaLines) {
+      for (const frag of line.fragments) {
+        const lower = frag.text.toLowerCase();
+        if (lower === 'referência' || lower === 'referencia') {
+          refX = frag.x;
+        } else if (lower === 'vencimentos' || lower === 'proventos') {
+          vencX = frag.x;
+        } else if (lower === 'descontos') {
+          descX = frag.x;
+        }
+      }
+      if (refX !== null && vencX !== null && descX !== null) {
+        break;
+      }
+    }
+
+    // Posições de fallback padrão baseadas no layout convencional de contracheque
+    const effectiveRefX = refX || 290;
+    const effectiveVencX = vencX || 370;
+    const effectiveDescX = descX || 454;
+
+    // 6. Extração das Rubricas da Tabela
+    const items: PayslipExtractedItem[] = [];
+    let inTableRegion = false;
+    let hasAdvancePayment = false;
+    let advanceAmount = 0;
+
+    for (const line of viaLines) {
+      const lower = line.text.toLowerCase();
+
+      // Início da tabela de rubricas
+      if (lower.includes('código') && lower.includes('descrição')) {
+        inTableRegion = true;
+        continue;
+      }
+
+      // Fim da tabela de rubricas ao atingir os totais
       if (
-        lower.includes('código') ||
-        lower.includes('codigo') ||
-        lower.includes('descrição') ||
-        lower.includes('referência') ||
         lower.includes('total de vencimentos') ||
         lower.includes('total vencimentos') ||
         lower.includes('total de proventos') ||
         lower.includes('total proventos') ||
-        lower.includes('total descontos') ||
-        lower.includes('total de descontos') ||
         lower.includes('valor líquido') ||
-        lower.includes('liquido a receber') ||
-        lower.includes('líquido a receber') ||
-        lower.includes('salário base') && lower.includes('sal. contr.') || // rodapés de bases de cálculo
-        lower.includes('base cálculo') ||
-        lower.includes('base calculo') ||
-        lower.includes('fgts do mês') ||
-        lower.includes('fgts do mes')
+        lower.includes('valor liquido') ||
+        lower.includes('salário base') ||
+        lower.includes('salario base')
       ) {
-        return true;
+        inTableRegion = false;
+        continue;
       }
-      return false;
-    };
 
-    for (const line of allLines) {
-      if (isIgnoreLine(line.text)) continue;
+      if (!inTableRegion) continue;
 
-      // Localiza fragmentos que contêm valores monetários
-      const monetaryFragments: { frag: TextFragment; value: number; raw: string }[] = [];
+      const frags = line.fragments;
+      if (frags.length < 2) continue;
 
-      for (const frag of line.fragments) {
-        const matches = frag.text.match(CURRENCY_REGEX);
-        if (matches) {
-          for (const rawVal of matches) {
-            const val = parseBrazilianCurrency(rawVal);
-            if (val > 0) {
-              monetaryFragments.push({ frag, value: val, raw: rawVal });
-            }
-          }
+      // 1º fragmento como código da rubrica (ex: "1", "256", "218")
+      let rawCode: string | undefined;
+      if (/^\d{1,5}$/.test(frags[0].text)) {
+        rawCode = frags[0].text;
+      }
+
+      let reference = '';
+      let vencValue: number | null = null;
+      let descValue: number | null = null;
+      const descFrags: string[] = [];
+
+      for (const f of frags) {
+        if (rawCode && f === frags[0]) continue;
+
+        const isRef = f.x >= effectiveRefX - 25 && f.x < effectiveVencX - 20;
+        const isVenc = f.x >= effectiveVencX - 20 && f.x < effectiveDescX - 20;
+        const isDesc = f.x >= effectiveDescX - 20 && f.x < 530;
+
+        if (isRef) {
+          // Coleta texto da coluna Referência (ex: "220:00", "50,00", "8,08")
+          reference = f.text;
+        } else if (isVenc) {
+          const val = parseBrazilianCurrency(f.text);
+          if (val > 0) vencValue = val;
+        } else if (isDesc) {
+          const val = parseBrazilianCurrency(f.text);
+          if (val > 0) descValue = val;
+        } else if (f.x < effectiveRefX - 25) {
+          descFrags.push(f.text);
         }
       }
 
-      if (monetaryFragments.length === 0) continue;
-
-      // Extrai código da rubrica se presente (ex: primeiro fragmento numérico com 3 a 5 dígitos)
-      let rawCode: string | undefined;
-      const firstFrag = line.fragments[0];
-      if (firstFrag && /^\d{1,5}$/.test(firstFrag.text.trim())) {
-        rawCode = firstFrag.text.trim();
+      let description = descFrags.join(' ').trim();
+      if (!description && (vencValue || descValue)) {
+        description = `Rubrica ${rawCode || ''}`.trim();
       }
 
-      // Identifica fragmentos que compõem a descrição da rubrica
-      const nonMonetaryFragments = line.fragments.filter((f) => {
-        if (rawCode && f.text.trim() === rawCode) return false;
-        return !f.text.match(CURRENCY_REGEX);
-      });
+      if (!description && !vencValue && !descValue) continue;
 
-      let description = nonMonetaryFragments
-        .map((f) => f.text.trim())
-        .filter((t) => t.length > 0)
-        .join(' ')
-        .trim();
-
-      if (!description) {
-        description = `Rubrica ${rawCode || 'Diversa'}`;
-      }
-
-      // Detecção de Parcelamento (Empréstimo Consignado)
+      // Detecta parcelamentos de empréstimos consignados
       let suggestedCategory: TransactionCategory = 'fixed';
       let currentInstallment: number | undefined;
       let totalInstallments: number | undefined;
@@ -429,91 +375,133 @@ export class PayslipPdfParserService {
         suggestedCategory = 'installment';
       }
 
-      // Para cada valor monetário encontrado na linha, determina se é Provento ou Desconto
-      for (const { frag, value } of monetaryFragments) {
-        let type: 'income' | 'expense' = 'income';
-
-        // Análise semântica por palavras-chave
-        const lowerDesc = description.toLowerCase();
-        const hasIncomeKeyword = INCOME_KEYWORDS.some((kw) => lowerDesc.includes(kw));
-        const hasExpenseKeyword = EXPENSE_KEYWORDS.some((kw) => lowerDesc.includes(kw));
-
-        if (hasExpenseKeyword && !hasIncomeKeyword) {
-          type = 'expense';
-        } else if (hasIncomeKeyword && !hasExpenseKeyword) {
-          type = 'income';
-        } else if (columnSplitX !== null) {
-          // Classificação espacial pela coordenada X da coluna
-          type = frag.x < columnSplitX ? 'income' : 'expense';
-        } else if (descontosHeaderX !== null && Math.abs(frag.x - descontosHeaderX) < 60) {
-          type = 'expense';
-        } else if (proventosHeaderX !== null && Math.abs(frag.x - proventosHeaderX) < 60) {
-          type = 'income';
-        } else {
-          // Fallback padrão se não houver indicadores claros
-          type = hasExpenseKeyword ? 'expense' : 'income';
-        }
-
+      // SE for Vencimento / Provento (Receita do Mês)
+      if (vencValue !== null) {
         items.push({
           tempId: randomUUID(),
           rawCode,
           description,
-          amount: Math.round(value * 100) / 100,
-          type,
+          reference: reference || undefined,
+          amount: Math.round(vencValue * 100) / 100,
+          type: 'income',
           suggestedCategory,
           currentInstallment,
           totalInstallments,
-          selected: true,
+          selected: true, // Vencimentos vêm selecionados por padrão!
         });
+      }
+
+      // SE for Desconto em Folha
+      if (descValue !== null) {
+        const lowerDesc = description.toLowerCase();
+        // Inteligência para Adiantamento Salarial / Quinzena:
+        // No Brasil, o adiantamento salarial aparece descontado no holerite porque
+        // o funcionário já o recebeu na quinzena (dia 20). Para fins de finanças pessoais,
+        // trata-se de uma ENTRADA (Receita) recebida no dia 20!
+        const isAdiantamento =
+          lowerDesc.includes('adiantamento') ||
+          lowerDesc.includes('vale') ||
+          rawCode === '218';
+
+        if (isAdiantamento) {
+          hasAdvancePayment = true;
+          advanceAmount = descValue;
+
+          const advanceDate = referenceMonth ? `${referenceMonth}-20` : undefined;
+
+          items.push({
+            tempId: randomUUID(),
+            rawCode,
+            description: description || 'Adiantamento Salarial (Quinzena)',
+            reference: reference || undefined,
+            amount: Math.round(descValue * 100) / 100,
+            type: 'income', // Reconhece como ENTRADA de dinheiro no dia 20!
+            suggestedCategory: 'fixed',
+            isAdvance: true,
+            suggestedDate: advanceDate,
+            selected: true, // Adiantamento vem selecionado como receita!
+          });
+        } else {
+          // Outros descontos (INSS, Plano de Saúde, Empréstimo):
+          // Como o usuário pediu especificamente "pegue apenas as receitas e não os descontos",
+          // os descontos normais são mantidos na lista para transparência,
+          // porém com selected: false (desmarcados por padrão).
+          items.push({
+            tempId: randomUUID(),
+            rawCode,
+            description,
+            reference: reference || undefined,
+            amount: Math.round(descValue * 100) / 100,
+            type: 'expense',
+            suggestedCategory,
+            currentInstallment,
+            totalInstallments,
+            isAdvance: false,
+            selected: false, // Descontos desmarcados por padrão!
+          });
+        }
       }
     }
 
-    // 6. Extração e Validação dos Totais (Rodapé)
+    // 7. Extração dos Totais Oficiais do Rodapé
     let grossAmount = 0;
     let totalDeductions = 0;
     let netAmount = 0;
 
-    const GROSS_REGEX =
-      /(?:total\s+(?:de\s+)?(?:vencimentos?|proventos?)|sal[aá]rio\s+bruto|bruto)\s*[:=]?\s*(?:r\$\s*)?([\d.,]+)/i;
-    const DEDUCTIONS_REGEX =
-      /(?:total\s+(?:de\s+)?descontos?|dedu[cç][oõ]es)\s*[:=]?\s*(?:r\$\s*)?([\d.,]+)/i;
-    const NET_REGEX =
-      /(?:l[ií]quido(?:\s+a\s+receber)?|valor\s+l[ií]quido|total\s+l[ií]quido)\s*[:=]?\s*(?:r\$\s*)?([\d.,]+)/i;
+    for (let i = 0; i < viaLines.length; i++) {
+      const l = viaLines[i];
+      const lower = l.text.toLowerCase();
 
-    for (const line of allLines) {
-      if (!grossAmount) {
-        const m = line.text.match(GROSS_REGEX);
-        if (m) grossAmount = parseBrazilianCurrency(m[1]);
+      // Linha "Total de Vencimentos" e "Total de Descontos"
+      if (
+        (lower.includes('total de vencimentos') || lower.includes('total vencimentos') || lower.includes('total proventos')) &&
+        (lower.includes('total de descontos') || lower.includes('total descontos'))
+      ) {
+        // Os valores podem estar na mesma linha ou na linha imediatamente abaixo
+        const sameLineMatches = l.text.match(/(\d{1,3}(?:\.\d{3})*,\d{2})/g);
+        if (sameLineMatches && sameLineMatches.length >= 2) {
+          grossAmount = parseBrazilianCurrency(sameLineMatches[0]);
+          totalDeductions = parseBrazilianCurrency(sameLineMatches[1]);
+        } else if (viaLines[i + 1]) {
+          const nextMatches = viaLines[i + 1].text.match(/(\d{1,3}(?:\.\d{3})*,\d{2})/g);
+          if (nextMatches && nextMatches.length >= 2) {
+            grossAmount = parseBrazilianCurrency(nextMatches[0]);
+            totalDeductions = parseBrazilianCurrency(nextMatches[1]);
+          }
+        }
       }
-      if (!totalDeductions) {
-        const m = line.text.match(DEDUCTIONS_REGEX);
-        if (m) totalDeductions = parseBrazilianCurrency(m[1]);
-      }
-      if (!netAmount) {
-        const m = line.text.match(NET_REGEX);
-        if (m) netAmount = parseBrazilianCurrency(m[1]);
+
+      // Linha "Valor Líquido"
+      if (lower.includes('valor líquido') || lower.includes('valor liquido') || lower.includes('líquido a receber') || lower.includes('liquido a receber')) {
+        const netMatches = l.text.match(/(\d{1,3}(?:\.\d{3})*,\d{2})/);
+        if (netMatches) {
+          netAmount = parseBrazilianCurrency(netMatches[1]);
+        }
       }
     }
 
-    // Cálculo das somas a partir das rubricas extraídas para validação e fallback
+    // Fallbacks calculados a partir das rubricas caso os campos do rodapé não tenham sido identificados
     const sumIncomes = Math.round(
-      items.filter((i) => i.type === 'income').reduce((acc, i) => acc + i.amount, 0) * 100
+      items.filter((i) => i.type === 'income' && !i.isAdvance).reduce((acc, i) => acc + i.amount, 0) * 100
     ) / 100;
 
     const sumExpenses = Math.round(
       items.filter((i) => i.type === 'expense').reduce((acc, i) => acc + i.amount, 0) * 100
     ) / 100;
 
-    // Se os campos do rodapé não foram identificados pelos rótulos, adota os valores calculados
-    if (!grossAmount && sumIncomes > 0) {
+    if (!grossAmount) {
       grossAmount = sumIncomes;
     }
-    if (!totalDeductions && sumExpenses > 0) {
-      totalDeductions = sumExpenses;
+    if (!totalDeductions) {
+      totalDeductions = sumExpenses + (hasAdvancePayment ? advanceAmount : 0);
     }
     if (!netAmount) {
       netAmount = Math.round(Math.max(0, grossAmount - totalDeductions) * 100) / 100;
     }
+
+    // Datas sugeridas de recebimento
+    const advanceDate = referenceMonth ? `${referenceMonth}-20` : undefined;
+    const netBalanceDate = referenceMonth ? getNextMonthDate(referenceMonth, 5) : undefined;
 
     return {
       employerName,
@@ -521,9 +509,12 @@ export class PayslipPdfParserService {
       grossAmount: Math.round(grossAmount * 100) / 100,
       totalDeductions: Math.round(totalDeductions * 100) / 100,
       netAmount: Math.round(netAmount * 100) / 100,
+      hasAdvancePayment,
+      advanceAmount: Math.round(advanceAmount * 100) / 100,
+      advanceDate,
+      netBalanceDate,
       items,
       rawTextPreview,
     };
   }
 }
-

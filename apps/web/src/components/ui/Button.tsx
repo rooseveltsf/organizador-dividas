@@ -10,7 +10,7 @@ const buttonRecipe = cva({
     fontWeight: 'medium',
     borderRadius: 'lg',
     cursor: 'pointer',
-    transition: 'all 0.2s ease-in-out',
+    transition: 'background-color 150ms, border-color 150ms, color 150ms',
     outline: 'none',
     userSelect: 'none',
     whiteSpace: 'nowrap',
@@ -30,18 +30,16 @@ const buttonRecipe = cva({
       primary: {
         bg: 'brand.primary',
         color: 'white',
-        boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
         _hover: {
           bg: 'brand.primaryHover',
         },
         _active: {
-          bg: 'brand.primaryHover',
+          bg: 'slate.900',
         },
       },
       danger: {
         bg: 'expense.600',
         color: 'white',
-        boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
         _hover: {
           bg: 'expense.700',
         },
@@ -64,12 +62,11 @@ const buttonRecipe = cva({
         },
       },
       outline: {
-        bg: 'white',
+        bg: 'bgCard',
         color: 'slate.700',
         borderWidth: '1px',
         borderStyle: 'solid',
         borderColor: 'slate.300',
-        boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
         _hover: {
           bg: 'slate.50',
           borderColor: 'slate.400',

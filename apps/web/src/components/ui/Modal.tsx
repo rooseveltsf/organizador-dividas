@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 import { css, cx } from '@/styled-system/css';
 import { X } from 'lucide-react';
 
@@ -16,7 +16,6 @@ const overlayStyle = css({
   inset: '0',
   zIndex: 50,
   backgroundColor: 'rgba(15, 23, 42, 0.5)',
-  backdropFilter: 'blur(4px)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -28,13 +27,13 @@ const modalBoxStyle = css({
   position: 'relative',
   width: '100%',
   maxWidth: '520px',
-  backgroundColor: 'white',
+  backgroundColor: 'bgCard',
   borderRadius: '2xl',
-  boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
   borderWidth: '1px',
   borderStyle: 'solid',
   borderColor: 'slate.200',
-  overflow: 'hidden',
+  maxHeight: 'calc(100dvh - 2rem)',
+  overflowY: 'auto',
   display: 'flex',
   flexDirection: 'column',
   animation: 'fadeIn 0.25s ease-out forwards',
@@ -57,8 +56,9 @@ const modalHeaderContentStyle = css({
 });
 
 const modalTitleStyle = css({
-  fontSize: 'lg',
-  fontWeight: 'bold',
+  fontFamily: 'heading',
+  fontSize: '2xl',
+  fontWeight: 'normal',
   color: 'slate.900',
   lineHeight: '1.3',
   margin: '0',
@@ -92,6 +92,32 @@ const modalBodyStyle = css({
   paddingY: '4',
 });
 
+type ModalLayerProps = React.ComponentPropsWithoutRef<'dialog'> & { onDismiss: () => void };
+
+export function ModalLayer({ onDismiss, children, className, ...props }: ModalLayerProps) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useLayoutEffect(() => {
+    const dialog = ref.current!;
+    const previousOverflow = document.body.style.overflow;
+    dialog.showModal();
+    document.body.style.overflow = 'hidden';
+    return () => {
+      dialog.close();
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  return (
+    <dialog ref={ref} className={cx('notebook-dialog', className)}
+      onCancel={(event) => { event.preventDefault(); onDismiss(); }}
+      onClick={(event) => { if (event.target === event.currentTarget) onDismiss(); }}
+      {...props}
+    >
+      {children}
+    </dialog>
+  );
+}
+
 export const Modal: React.FC<ModalProps> = ({
   isOpen,
   onClose,
@@ -100,50 +126,20 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   className,
 }) => {
-  // Fecha o modal ao pressionar a tecla Escape
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
-
-  // Bloqueia o scroll do body quando o modal estiver aberto
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => {
-      document.body.style.overflow = '';
-    };
-  }, [isOpen]);
-
+  const titleId = React.useId();
   if (!isOpen) return null;
 
   return (
-    <div
+    <ModalLayer
       className={overlayStyle}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          onClose();
-        }
-      }}
-      role="dialog"
-      aria-modal="true"
+      onDismiss={onClose}
+      aria-labelledby={title ? titleId : undefined}
     >
       <div className={cx(modalBoxStyle, className)}>
         {(title || description) && (
           <div className={modalHeaderStyle}>
             <div className={modalHeaderContentStyle}>
-              {title && <h2 className={modalTitleStyle}>{title}</h2>}
+              {title && <h2 id={titleId} className={modalTitleStyle}>{title}</h2>}
               {description && <p className={modalDescriptionStyle}>{description}</p>}
             </div>
             <button
@@ -158,6 +154,6 @@ export const Modal: React.FC<ModalProps> = ({
         )}
         <div className={modalBodyStyle}>{children}</div>
       </div>
-    </div>
+    </ModalLayer>
   );
 };

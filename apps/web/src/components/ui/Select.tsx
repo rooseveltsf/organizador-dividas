@@ -5,15 +5,16 @@ const selectRecipe = cva({
   base: {
     display: 'block',
     width: '100%',
+    minWidth: 0,
     borderRadius: 'lg',
     borderWidth: '1px',
     borderStyle: 'solid',
-    backgroundColor: 'white',
+    backgroundColor: 'bgCard',
     color: 'slate.900',
     outline: 'none',
     cursor: 'pointer',
     appearance: 'none',
-    transition: 'all 0.2s ease-in-out',
+    transition: 'background-color 150ms, border-color 150ms, color 150ms',
     _disabled: {
       backgroundColor: 'slate.50',
       color: 'slate.400',
@@ -35,13 +36,13 @@ const selectRecipe = cva({
         },
       },
       false: {
-        borderColor: 'slate.200',
+        borderColor: 'fieldBorder',
         _hover: {
-          borderColor: 'slate.300',
+          borderColor: 'slate.500',
         },
         _focus: {
           borderColor: 'brand.primary',
-          ringColor: 'brand.primarySoft',
+          ringColor: 'brand.primary',
         },
       },
     },

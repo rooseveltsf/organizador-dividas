@@ -156,11 +156,14 @@ export interface PayslipExtractedItem {
   tempId: string;
   rawCode?: string;
   description: string;
+  reference?: string;
   amount: number;
   type: 'income' | 'expense';
   suggestedCategory: 'fixed' | 'recurring' | 'installment' | 'daily';
   currentInstallment?: number;
   totalInstallments?: number;
+  isAdvance?: boolean;
+  suggestedDate?: string;
   selected: boolean;
 }
 
@@ -170,6 +173,10 @@ export interface PayslipParseResult {
   grossAmount: number;
   totalDeductions: number;
   netAmount: number;
+  hasAdvancePayment?: boolean;
+  advanceAmount?: number;
+  advanceDate?: string;
+  netBalanceDate?: string;
   items: PayslipExtractedItem[];
   rawTextPreview: string;
 }
@@ -248,11 +255,14 @@ export const payslipExtractedItemSchema = z.object({
   tempId: z.string(),
   rawCode: z.string().optional(),
   description: z.string().trim().min(1, 'A descrição é obrigatória'),
+  reference: z.string().optional(),
   amount: z.coerce.number().positive('O valor deve ser positivo'),
   type: z.enum(['income', 'expense']),
   suggestedCategory: z.enum(['fixed', 'recurring', 'installment', 'daily']),
   currentInstallment: z.coerce.number().int().positive().optional().nullable(),
   totalInstallments: z.coerce.number().int().positive().optional().nullable(),
+  isAdvance: z.boolean().optional(),
+  suggestedDate: z.string().optional(),
   selected: z.boolean(),
 });
 

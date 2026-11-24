@@ -5,22 +5,16 @@ const cardRecipe = cva({
   base: {
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: 'white',
+    backgroundColor: 'bgCard',
     borderRadius: '2xl',
     borderWidth: '1px',
     borderStyle: 'solid',
     borderColor: 'slate.200',
-    transition: 'all 0.2s ease-in-out',
+    transition: 'background-color 150ms, border-color 150ms, color 150ms',
   },
   variants: {
     variant: {
-      elevated: {
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05)',
-        _hover: {
-          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04)',
-          borderColor: 'slate.300',
-        },
-      },
+      elevated: { borderColor: 'slate.200' },
       outline: {
         boxShadow: 'none',
         _hover: {
@@ -98,8 +92,9 @@ export const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<
 CardHeader.displayName = 'CardHeader';
 
 const cardTitleStyle = css({
-  fontSize: 'lg',
-  fontWeight: 'semibold',
+  fontFamily: 'heading',
+  fontSize: '2xl',
+  fontWeight: 'normal',
   color: 'slate.900',
   lineHeight: '1.3',
   margin: '0',

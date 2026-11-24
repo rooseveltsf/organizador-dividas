@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useTransactions } from '../contexts/TransactionContext';
-import { useProfiles, hexToRgba } from '../contexts/ProfileContext';
+import { useProfiles } from '../contexts/ProfileContext';
 import {
   Card,
   CardHeader,
@@ -11,12 +11,14 @@ import {
   Button,
   Modal,
 } from '../components/ui';
+import { NotebookHeader } from '../components/NotebookHeader';
 import { TransactionForm } from '../components/TransactionForm';
 import { PayslipImportModal } from '../components/PayslipImportModal';
 import type { Transaction } from '@organizador/shared';
 import { css } from '@/styled-system/css';
 import {
   Wallet,
+  NotebookPen,
   TrendingUp,
   ShoppingBag,
   CreditCard,
@@ -25,8 +27,6 @@ import {
   Trash2,
   Calendar,
   Layers,
-  ArrowDownRight,
-  ArrowUpRight,
   ArrowLeftRight,
   Plus,
   Pencil,
@@ -80,404 +80,6 @@ function formatDate(dateStr: string): string {
 }
 
 // ============================================================================
-// Estilos Panda CSS para o Dashboard (Zero inline styles)
-// ============================================================================
-
-const pageContainerStyle = css({
-  maxWidth: '1200px',
-  margin: '0 auto',
-  padding: { base: '4', md: '8' },
-  minHeight: '100vh',
-});
-
-const headerStyle = css({
-  display: 'flex',
-  flexDirection: { base: 'column', md: 'row' },
-  justifyContent: 'space-between',
-  alignItems: { base: 'stretch', md: 'center' },
-  gap: '4',
-  marginBottom: '8',
-  padding: '5',
-  borderRadius: '2xl',
-  borderWidth: '1px',
-  borderStyle: 'solid',
-  borderColor: 'slate.200',
-  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
-  transition: 'all 0.25s ease-in-out',
-});
-
-const headerTitleStyle = css({
-  fontSize: '2xl',
-  fontWeight: '800',
-  color: 'slate.900',
-  letterSpacing: '-0.025em',
-  margin: '0',
-});
-
-const headerSubtitleStyle = css({
-  color: 'slate.500',
-  fontSize: 'sm',
-  marginTop: '1',
-  margin: '0',
-});
-
-const monthPickerContainerStyle = css({
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: '2',
-  backgroundColor: 'white',
-  paddingY: '1.5',
-  paddingX: '2',
-  borderRadius: 'xl',
-  borderWidth: '1px',
-  borderStyle: 'solid',
-  borderColor: 'slate.200',
-  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
-});
-
-const monthPickerLabelStyle = css({
-  fontWeight: 'semibold',
-  fontSize: 'sm',
-  color: 'slate.800',
-  minWidth: '150px',
-  textAlign: 'center',
-});
-
-const cardsGridStyle = css({
-  display: 'grid',
-  gridTemplateColumns: {
-    base: '1fr',
-    sm: 'repeat(2, 1fr)',
-    lg: 'repeat(4, 1fr)',
-  },
-  gap: '4',
-  marginBottom: '8',
-});
-
-const mainGridStyle = css({
-  display: 'grid',
-  gridTemplateColumns: {
-    base: '1fr',
-    lg: '380px 1fr',
-  },
-  gap: '6',
-  alignItems: 'start',
-});
-
-const cardHeaderRowStyle = css({
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-});
-
-const iconBadgeStyle = (colorType: 'income' | 'expense' | 'neutral') =>
-  css({
-    backgroundColor:
-      colorType === 'income' ? 'income.50' : colorType === 'expense' ? 'expense.50' : 'slate.100',
-    color:
-      colorType === 'income' ? 'income.600' : colorType === 'expense' ? 'expense.600' : 'slate.600',
-    padding: '2',
-    borderRadius: 'lg',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  });
-
-const cardValueStyle = (colorType: 'income' | 'expense' | 'neutral') =>
-  css({
-    color:
-      colorType === 'income' ? 'income.600' : colorType === 'expense' ? 'expense.600' : 'slate.800',
-    fontSize: '2xl',
-    fontWeight: 'bold',
-    marginTop: '2',
-  });
-
-const cardFooterStatsStyle = css({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '1',
-  width: '100%',
-  fontSize: 'xs',
-});
-
-const cardFooterRowStyle = css({
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: '2',
-  width: '100%',
-});
-
-const statLabelStyle = css({
-  color: 'slate.500',
-});
-
-const statValueStyle = (colorType?: 'income' | 'expense' | 'warning' | 'neutral') =>
-  css({
-    fontWeight: 'semibold',
-    color:
-      colorType === 'income'
-        ? 'income.700'
-        : colorType === 'expense'
-          ? 'expense.700'
-          : colorType === 'warning'
-            ? 'warning.600'
-            : 'slate.700',
-  });
-
-const filterBarContainerStyle = css({
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  flexWrap: 'wrap',
-  gap: '3',
-});
-
-const filterTabGroupStyle = css({
-  display: 'flex',
-  gap: '1',
-  backgroundColor: 'slate.100',
-  padding: '1',
-  borderRadius: 'lg',
-});
-
-const filterTabButtonStyle = css({
-  height: '7',
-  fontSize: 'xs',
-  paddingX: '2.5',
-});
-
-const transactionsListStyle = css({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '3',
-});
-
-const transactionItemCardStyle = (isPaid: boolean, isOverdue: boolean) =>
-  css({
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '4',
-    borderRadius: 'xl',
-    borderWidth: '1px',
-    borderStyle: 'solid',
-    borderColor: isOverdue ? 'expense.300' : isPaid ? 'slate.200' : 'slate.200',
-    borderLeftWidth: isOverdue ? '4px' : '1px',
-    borderLeftColor: isOverdue ? 'expense.500' : undefined,
-    backgroundColor: isPaid ? 'slate.50' : 'white',
-    transition: 'all 0.2s ease-in-out',
-    gap: '3',
-    _hover: {
-      borderColor: isOverdue ? 'expense.400' : 'slate.300',
-      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
-    },
-  });
-
-const statusToggleButtonStyle = (isPaid: boolean) =>
-  css({
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '1.5',
-    borderRadius: 'lg',
-    backgroundColor: isPaid ? 'income.50' : 'transparent',
-    color: isPaid ? 'income.600' : 'slate.400',
-    borderWidth: '1px',
-    borderStyle: 'solid',
-    borderColor: isPaid ? 'income.200' : 'transparent',
-    cursor: 'pointer',
-    transition: 'all 0.15s ease-in-out',
-    flexShrink: 0,
-    _hover: {
-      backgroundColor: isPaid ? 'income.100' : 'slate.100',
-      color: isPaid ? 'income.700' : 'income.600',
-      borderColor: isPaid ? 'income.300' : 'slate.300',
-    },
-  });
-
-const transactionTypeIconStyle = (isIncome: boolean, isPaid: boolean) =>
-  css({
-    backgroundColor: isIncome ? 'income.50' : 'expense.50',
-    color: isIncome ? 'income.600' : 'expense.600',
-    padding: '2',
-    borderRadius: 'lg',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    opacity: isPaid ? 0.75 : 1,
-    flexShrink: 0,
-  });
-
-const transactionDetailsStyle = css({
-  flex: '1',
-  minWidth: 0,
-});
-
-const transactionTitleRowStyle = css({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '2',
-  flexWrap: 'wrap',
-});
-
-const transactionTitleStyle = (isPaid: boolean) =>
-  css({
-    color: isPaid ? 'slate.500' : 'slate.900',
-    fontSize: 'sm',
-    fontWeight: 'semibold',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    textDecoration: isPaid ? 'line-through' : 'none',
-  });
-
-const installmentBadgeStyle = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '1',
-  backgroundColor: 'brand.50',
-  color: 'brand.700',
-  borderWidth: '1px',
-  borderStyle: 'solid',
-  borderColor: 'brand.100',
-  paddingX: '2',
-  paddingY: '0.5',
-  borderRadius: 'md',
-  fontSize: 'xs',
-  fontWeight: 'semibold',
-});
-
-const categoryBadgeStyle = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  backgroundColor: 'slate.100',
-  color: 'slate.700',
-  paddingX: '2',
-  paddingY: '0.5',
-  borderRadius: 'md',
-  fontSize: 'xs',
-  fontWeight: 'medium',
-});
-
-const statusBadgePaidStyle = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '1',
-  backgroundColor: 'income.50',
-  color: 'income.700',
-  borderWidth: '1px',
-  borderStyle: 'solid',
-  borderColor: 'income.200',
-  paddingX: '2',
-  paddingY: '0.5',
-  borderRadius: 'md',
-  fontSize: 'xs',
-  fontWeight: 'semibold',
-});
-
-const statusBadgeOverdueStyle = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '1',
-  backgroundColor: 'expense.50',
-  color: 'expense.700',
-  borderWidth: '1px',
-  borderStyle: 'solid',
-  borderColor: 'expense.200',
-  paddingX: '2',
-  paddingY: '0.5',
-  borderRadius: 'md',
-  fontSize: 'xs',
-  fontWeight: 'semibold',
-});
-
-const statusBadgePendingStyle = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '1',
-  backgroundColor: 'slate.100',
-  color: 'slate.600',
-  borderWidth: '1px',
-  borderStyle: 'solid',
-  borderColor: 'slate.200',
-  paddingX: '2',
-  paddingY: '0.5',
-  borderRadius: 'md',
-  fontSize: 'xs',
-  fontWeight: 'medium',
-});
-
-const transactionMetaRowStyle = css({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '3',
-  fontSize: 'xs',
-  color: 'slate.500',
-  marginTop: '1',
-});
-
-const transactionAmountAreaStyle = css({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '2',
-  textAlign: 'right',
-  flexShrink: 0,
-});
-
-const transactionAmountStyle = (isIncome: boolean, isPaid: boolean) =>
-  css({
-    color: isPaid ? 'slate.400' : isIncome ? 'income.600' : 'expense.600',
-    fontWeight: 'bold',
-    fontSize: 'sm',
-    whiteSpace: 'nowrap',
-  });
-
-const actionButtonGhostStyle = (variant: 'edit' | 'delete') =>
-  css({
-    color: 'slate.400',
-    height: '9',
-    width: '9',
-    minWidth: '9',
-    padding: '0',
-    paddingInline: '0',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    borderRadius: 'lg',
-    cursor: 'pointer',
-    transition: 'all 0.15s ease-in-out',
-    _hover: {
-      backgroundColor: variant === 'delete' ? 'expense.50' : 'brand.primarySoft',
-      color: variant === 'delete' ? 'expense.600' : 'brand.primary',
-    },
-  });
-
-const emptyStateContainerStyle = css({
-  textAlign: 'center',
-  padding: '12',
-  color: 'slate.400',
-  backgroundColor: 'slate.50',
-  borderRadius: 'xl',
-  borderWidth: '1px',
-  borderStyle: 'dashed',
-  borderColor: 'slate.300',
-});
-
-const emptyStateTextStyle = css({
-  fontWeight: 'medium',
-  color: 'slate.600',
-  margin: '0',
-});
-
-const emptyStateSubtextStyle = css({
-  fontSize: 'xs',
-  color: 'slate.400',
-  marginTop: '1',
-});
-
 const modalAlertBoxStyle = css({
   display: 'flex',
   alignItems: 'flex-start',
@@ -638,367 +240,56 @@ export const Dashboard: React.FC = () => {
     return true;
   });
 
-  return (
-    <div className={pageContainerStyle}>
-      {/* Cabeçalho da Aplicação com Avatar e Gradiente Dinâmico do Perfil */}
-      <header
-        style={{
-          background: activeProfile
-            ? `linear-gradient(135deg, ${hexToRgba(activeProfile.primaryColor, 0.08)}, ${hexToRgba(activeProfile.secondaryColor, 0.04)}), #ffffff`
-            : '#ffffff',
-          borderColor: activeProfile ? hexToRgba(activeProfile.primaryColor, 0.25) : '#e2e8f0',
-        }}
-        className={headerStyle}
-      >
-        <div className={css({ display: 'flex', alignItems: 'center', gap: '4', flexWrap: 'wrap' })}>
-          {/* Avatar Colorido do Perfil Ativo */}
-          {activeProfile && (
-            <div
-              style={{
-                background: `linear-gradient(135deg, ${activeProfile.primaryColor}, ${activeProfile.secondaryColor})`,
-                boxShadow: `0 4px 10px -1px ${hexToRgba(activeProfile.primaryColor, 0.35)}`,
-              }}
-              className={css({
-                width: '12',
-                height: '12',
-                borderRadius: 'full',
-                color: 'white',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontWeight: '800',
-                fontSize: 'lg',
-                flexShrink: 0,
-              })}
-            >
-              {activeProfile.avatarInitials}
-            </div>
-          )}
+  const metrics: { title: string; icon: typeof Wallet; value: number; rows: [string, number][] }[] = [
+    { title: 'Saldo livre', icon: Wallet, value: freeBalance, rows: [['Realizado', realizedBalance], ['Pendente previsto', pendingBalance]] },
+    { title: 'Total de entradas', icon: TrendingUp, value: totalIncome, rows: [['Recebido', paidIncome], ['A receber', pendingIncome]] },
+    { title: 'Despesas do dia a dia', icon: ShoppingBag, value: dailyFixedTotal, rows: [['Pago', dailyFixedPaid], ['Pendente', dailyFixedPending]] },
+    { title: 'Faturas e parcelas', icon: CreditCard, value: installmentRecurringTotal, rows: [['Pago', installmentRecurringPaid], ['Pendente', installmentRecurringPending]] },
+  ];
 
-          <div>
-            <div className={css({ display: 'flex', alignItems: 'center', gap: '2.5' })}>
-              <h1 className={headerTitleStyle}>
-                {activeProfile ? activeProfile.name : 'Organizador de Dívidas'}
-              </h1>
-              {activeProfile && (
-                <span
-                  style={{
-                    color: activeProfile.primaryColor,
-                    backgroundColor: hexToRgba(activeProfile.primaryColor, 0.1),
-                    borderColor: hexToRgba(activeProfile.primaryColor, 0.25),
-                  }}
-                  className={css({
-                    fontSize: '2xs',
-                    fontWeight: 'bold',
-                    textTransform: 'uppercase',
-                    paddingX: '2',
-                    paddingY: '0.5',
-                    borderRadius: 'full',
-                    borderWidth: '1px',
-                    borderStyle: 'solid',
-                  })}
-                >
-                  Perfil Ativo
-                </span>
-              )}
+  return (
+    <main className="notebook-page">
+      <NotebookHeader>
+        {activeProfile && (
+          <span className="active-profile">
+            <span className="profile-monogram mini" aria-hidden="true">{activeProfile.avatarInitials}</span>
+            {activeProfile.name}
+          </span>
+        )}
+        <Button variant="outline" size="sm" onClick={() => selectProfile(null)}><ArrowLeftRight size={14} /> Trocar perfil</Button>
+        <button className="profile-delete" onClick={() => setIsDeleteProfileModalOpen(true)} aria-label="Excluir perfil ativo" title="Excluir perfil ativo"><Trash2 size={15} /></button>
+      </NotebookHeader>
+
+      <header className="month-header">
+        <div>
+          <div className="small-label"><NotebookPen size={15} /> Caderno financeiro</div>
+          <div className="month-nav">
+            <h1>{MONTH_NAMES[selectedMonth - 1]} <em>{selectedYear}</em></h1>
+            <div className="month-arrows">
+              <button onClick={handlePrevMonth} aria-label="Mês anterior"><ChevronLeft size={18} /></button>
+              <button onClick={handleNextMonth} aria-label="Próximo mês"><ChevronRight size={18} /></button>
             </div>
-            <p className={headerSubtitleStyle}>
-              Painel financeiro mensal e controle de parcelamentos
-            </p>
           </div>
         </div>
-
-        {/* Ações do Cabeçalho: Botão de Trocar Perfil + Nova Receita + Seletor de Mês/Ano */}
-        <div className={css({ display: 'flex', alignItems: 'center', gap: '3', flexWrap: 'wrap' })}>
-          {/* Botão de Trocar Perfil */}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => selectProfile(null)}
-            className={css({
-              display: 'flex',
-              alignItems: 'center',
-              gap: '1.5',
-              height: '9',
-              fontSize: 'xs',
-              fontWeight: 'semibold',
-              color: 'slate.700',
-              _hover: {
-                backgroundColor: 'slate.100',
-                color: 'slate.900',
-              },
-            })}
-          >
-            <ArrowLeftRight size={14} />
-            <span>Trocar Perfil</span>
-          </Button>
-
-          {/* Botão de Excluir Perfil */}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => setIsDeleteProfileModalOpen(true)}
-            title="Excluir perfil ativo"
-            className={css({
-              display: 'flex',
-              alignItems: 'center',
-              gap: '1.5',
-              height: '9',
-              fontSize: 'xs',
-              fontWeight: 'medium',
-              color: 'slate.500',
-              _hover: {
-                backgroundColor: 'expense.50',
-                color: 'expense.600',
-              },
-            })}
-          >
-            <Trash2 size={14} />
-            <span>Excluir Perfil</span>
-          </Button>
-
-          {/* Botão de Importar Contracheque (PDF) */}
-          <Button
-            type="button"
-            onClick={() => setIsPayslipModalOpen(true)}
-            style={{
-              background: activeProfile
-                ? `linear-gradient(135deg, ${activeProfile.primaryColor}, ${activeProfile.secondaryColor})`
-                : 'linear-gradient(135deg, var(--profile-primary, #3b82f6), var(--profile-secondary, #8b5cf6))',
-              boxShadow: activeProfile
-                ? `0 2px 6px -1px ${hexToRgba(activeProfile.primaryColor, 0.4)}`
-                : '0 2px 6px -1px rgba(59, 130, 246, 0.4)',
-              color: '#ffffff',
-              border: 'none',
-            }}
-            className={css({
-              display: 'flex',
-              alignItems: 'center',
-              gap: '1.5',
-              paddingX: '3.5',
-              height: '9',
-              fontSize: 'xs',
-              fontWeight: 'semibold',
-              borderRadius: 'lg',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease-in-out',
-              _hover: {
-                filter: 'brightness(1.08)',
-                transform: 'translateY(-1px)',
-              },
-              _active: {
-                transform: 'translateY(0)',
-              },
-            })}
-          >
-            <FileText size={16} />
-            <span>Importar Contracheque (PDF)</span>
-          </Button>
-
-          <Button
-            type="button"
-            variant="primary"
-            onClick={() => {
-              setEditingIncome(null);
-              setIsIncomeModalOpen(true);
-            }}
-            className={css({
-              backgroundColor: 'income.600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '1.5',
-              paddingX: '3.5',
-              height: '9',
-              fontSize: 'xs',
-              fontWeight: 'semibold',
-              _hover: { backgroundColor: 'income.700' },
-              boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
-            })}
-          >
-            <TrendingUp size={16} />
-            <span>+ Nova Receita</span>
-          </Button>
-
-          {/* Seletor de Mês/Ano */}
-          <div className={monthPickerContainerStyle}>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={handlePrevMonth}
-              aria-label="Mês anterior"
-              className={css({ paddingX: '2', height: '7' })}
-            >
-              <ChevronLeft size={16} />
-            </Button>
-
-            <span className={monthPickerLabelStyle}>
-              {MONTH_NAMES[selectedMonth - 1]} {selectedYear}
-            </span>
-
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={handleNextMonth}
-              aria-label="Próximo mês"
-              className={css({ paddingX: '2', height: '7' })}
-            >
-              <ChevronRight size={16} />
-            </Button>
-          </div>
+        <div className="month-actions">
+          <Button variant="outline" onClick={() => setIsPayslipModalOpen(true)}><FileText size={16} /> Importar contracheque</Button>
+          <Button onClick={() => { setEditingIncome(null); setIsIncomeModalOpen(true); }}><Plus size={16} /> Nova receita</Button>
         </div>
       </header>
 
-      {/* 4 Cards de Métricas com Status Detalhado Pago/Pendente */}
-      <section className={cardsGridStyle} aria-label="Resumo Financeiro">
-        {/* 1. Saldo Livre */}
-        <Card variant="elevated">
-          <CardHeader>
-            <div className={cardHeaderRowStyle}>
-              <CardDescription>Saldo Livre</CardDescription>
-              <div
-                className={iconBadgeStyle(
-                  freeBalance >= 0 ? 'income' : 'expense'
-                )}
-              >
-                <Wallet size={18} />
-              </div>
-            </div>
-            <CardTitle
-              className={cardValueStyle(
-                freeBalance >= 0 ? 'income' : 'expense'
-              )}
-            >
-              {formatCurrency(freeBalance)}
-            </CardTitle>
-          </CardHeader>
-          <CardFooter>
-            <div className={cardFooterStatsStyle}>
-              <div className={cardFooterRowStyle}>
-                <span className={statLabelStyle}>Realizado:</span>
-                <span
-                  className={statValueStyle(
-                    realizedBalance >= 0 ? 'income' : 'expense'
-                  )}
-                >
-                  {formatCurrency(realizedBalance)}
-                </span>
-              </div>
-              <div className={cardFooterRowStyle}>
-                <span className={statLabelStyle}>Pendente previsto:</span>
-                <span
-                  className={statValueStyle(
-                    pendingBalance >= 0 ? 'neutral' : 'warning'
-                  )}
-                >
-                  {formatCurrency(pendingBalance)}
-                </span>
-              </div>
-            </div>
-          </CardFooter>
-        </Card>
-
-        {/* 2. Total de Entradas */}
-        <Card variant="elevated">
-          <CardHeader>
-            <div className={cardHeaderRowStyle}>
-              <CardDescription>Total de Entradas</CardDescription>
-              <div className={iconBadgeStyle('income')}>
-                <TrendingUp size={18} />
-              </div>
-            </div>
-            <CardTitle className={cardValueStyle('income')}>
-              {formatCurrency(totalIncome)}
-            </CardTitle>
-          </CardHeader>
-          <CardFooter>
-            <div className={cardFooterStatsStyle}>
-              <div className={cardFooterRowStyle}>
-                <span className={statLabelStyle}>Recebido:</span>
-                <span className={statValueStyle('income')}>
-                  {formatCurrency(paidIncome)}
-                </span>
-              </div>
-              <div className={cardFooterRowStyle}>
-                <span className={statLabelStyle}>A receber:</span>
-                <span className={statValueStyle('neutral')}>
-                  {formatCurrency(pendingIncome)}
-                </span>
-              </div>
-            </div>
-          </CardFooter>
-        </Card>
-
-        {/* 3. Despesas do Dia a Dia (daily + fixed) */}
-        <Card variant="elevated">
-          <CardHeader>
-            <div className={cardHeaderRowStyle}>
-              <CardDescription>Despesas do Dia a Dia</CardDescription>
-              <div className={iconBadgeStyle('neutral')}>
-                <ShoppingBag size={18} />
-              </div>
-            </div>
-            <CardTitle className={cardValueStyle('neutral')}>
-              {formatCurrency(dailyFixedTotal)}
-            </CardTitle>
-          </CardHeader>
-          <CardFooter>
-            <div className={cardFooterStatsStyle}>
-              <div className={cardFooterRowStyle}>
-                <span className={statLabelStyle}>Pago:</span>
-                <span className={statValueStyle('income')}>
-                  {formatCurrency(dailyFixedPaid)}
-                </span>
-              </div>
-              <div className={cardFooterRowStyle}>
-                <span className={statLabelStyle}>Pendente:</span>
-                <span className={statValueStyle('expense')}>
-                  {formatCurrency(dailyFixedPending)}
-                </span>
-              </div>
-            </div>
-          </CardFooter>
-        </Card>
-
-        {/* 4. Faturas/Parcelamentos (installment + recurring) */}
-        <Card variant="elevated">
-          <CardHeader>
-            <div className={cardHeaderRowStyle}>
-              <CardDescription>Faturas / Parcelamentos</CardDescription>
-              <div className={iconBadgeStyle('expense')}>
-                <CreditCard size={18} />
-              </div>
-            </div>
-            <CardTitle className={cardValueStyle('expense')}>
-              {formatCurrency(installmentRecurringTotal)}
-            </CardTitle>
-          </CardHeader>
-          <CardFooter>
-            <div className={cardFooterStatsStyle}>
-              <div className={cardFooterRowStyle}>
-                <span className={statLabelStyle}>Pago:</span>
-                <span className={statValueStyle('income')}>
-                  {formatCurrency(installmentRecurringPaid)}
-                </span>
-              </div>
-              <div className={cardFooterRowStyle}>
-                <span className={statLabelStyle}>Pendente:</span>
-                <span className={statValueStyle('expense')}>
-                  {formatCurrency(installmentRecurringPending)}
-                </span>
-              </div>
-            </div>
-          </CardFooter>
-        </Card>
+      <section className="month-summary" aria-label="Resumo financeiro">
+        {metrics.map(({ title, icon: Icon, value, rows }) => (
+          <div className="metric" key={title}>
+            <h2><Icon size={17} strokeWidth={1.6} /> {title}</h2>
+            <p className="metric-value">{formatCurrency(value)}</p>
+            <dl>{rows.map(([label, amount]) => <div key={label}><dt>{label}</dt><dd>{formatCurrency(amount)}</dd></div>)}</dl>
+          </div>
+        ))}
       </section>
 
-      {/* Conteúdo Principal: Formulário + Lista de Transações */}
-      <div className={mainGridStyle}>
+      <div className="ledger-layout">
         {/* Coluna 1: Formulário Exclusivo de Dívidas / Despesas */}
-        <Card variant="elevated">
+        <Card variant="outline" className="entry-form" id="debt-form">
           <CardHeader>
             <div className={css({ display: 'flex', alignItems: 'center', gap: '2' })}>
               {editingTransaction ? (
@@ -1007,7 +298,7 @@ export const Dashboard: React.FC = () => {
                 <Plus size={20} className={css({ color: 'brand.600' })} />
               )}
               <CardTitle>
-                {editingTransaction ? 'Editar Dívida' : 'Nova Dívida'}
+                {editingTransaction ? 'Editar dívida' : 'Nova dívida'}
               </CardTitle>
             </div>
             <CardDescription>
@@ -1026,32 +317,32 @@ export const Dashboard: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Coluna 2: Lista de Transações do Mês */}
-        <Card variant="elevated">
+        {/* Coluna 2: Lista de Transações do mês */}
+        <Card variant="outline" className="ledger">
           <CardHeader>
-            <div className={filterBarContainerStyle}>
+            <div className="ledger-header">
               <div>
-                <CardTitle>Transações do Mês</CardTitle>
+                <CardTitle>Transações do mês</CardTitle>
                 <CardDescription>
                   Acompanhe e gerencie as contas de {MONTH_NAMES[selectedMonth - 1]}
                 </CardDescription>
               </div>
 
               {/* Filtro por tipo de transação */}
-              <div className={filterTabGroupStyle}>
+              <div className="ledger-tabs">
                 <Button
                   size="sm"
                   variant={activeTab === 'all' ? 'primary' : 'ghost'}
                   onClick={() => setActiveTab('all')}
-                  className={filterTabButtonStyle}
+                  aria-pressed={activeTab === 'all'}
                 >
                   Todas ({transactions.length})
                 </Button>
                 <Button
                   size="sm"
-                  variant={activeTab === 'expense' ? 'danger' : 'ghost'}
+                  variant={activeTab === 'expense' ? 'primary' : 'ghost'}
                   onClick={() => setActiveTab('expense')}
-                  className={filterTabButtonStyle}
+                  aria-pressed={activeTab === 'expense'}
                 >
                   Saídas
                 </Button>
@@ -1059,7 +350,7 @@ export const Dashboard: React.FC = () => {
                   size="sm"
                   variant={activeTab === 'income' ? 'primary' : 'ghost'}
                   onClick={() => setActiveTab('income')}
-                  className={filterTabButtonStyle}
+                  aria-pressed={activeTab === 'income'}
                 >
                   Entradas
                 </Button>
@@ -1069,21 +360,21 @@ export const Dashboard: React.FC = () => {
 
           <CardContent>
             {isLoading && transactions.length === 0 ? (
-              <div className={emptyStateContainerStyle}>
-                <p className={emptyStateTextStyle}>Carregando transações...</p>
+              <div className="ledger-empty">
+                <p className="empty-title">Carregando transações...</p>
               </div>
             ) : filteredTransactions.length === 0 ? (
-              <div className={emptyStateContainerStyle}>
+              <div className="ledger-empty">
                 <Layers size={32} className={css({ margin: '0 auto 3', opacity: 0.5 })} />
-                <p className={emptyStateTextStyle}>
-                  Nenhuma transação cadastrada em {MONTH_NAMES[selectedMonth - 1]} de {selectedYear}.
+                <p className="empty-title">
+                  Nenhuma transação nesta seleção em {MONTH_NAMES[selectedMonth - 1]} de {selectedYear}.
                 </p>
-                <span className={emptyStateSubtextStyle}>
-                  Utilize o formulário ao lado para cadastrar sua primeira entrada ou dívida.
+                <span className="empty-hint">
+                  Use Nova receita ou o formulário de dívida para registrar uma transação.
                 </span>
               </div>
             ) : (
-              <div className={transactionsListStyle}>
+              <div className="ledger-list">
                 {filteredTransactions.map((tx) => {
                   const isIncome = tx.type === 'income';
                   const isPaid = tx.status === 'paid';
@@ -1094,13 +385,14 @@ export const Dashboard: React.FC = () => {
                   return (
                     <div
                       key={tx.id}
-                      className={transactionItemCardStyle(isPaid, isOverdue)}
+                      className="ledger-row"
                     >
                       {/* Botão Rápido de Quitação (Marcar/Desmarcar como Pago ou Recebido) */}
                       <button
                         type="button"
                         onClick={() => toggleTransactionStatus(tx.id)}
-                        className={statusToggleButtonStyle(isPaid)}
+                        className="settle-button"
+                        aria-pressed={isPaid}
                         title={
                           isIncome
                             ? isPaid
@@ -1123,51 +415,46 @@ export const Dashboard: React.FC = () => {
                         {isPaid ? <CheckCircle2 size={20} /> : <Circle size={20} />}
                       </button>
 
-                      {/* Ícone Indicador de Entrada/Saída */}
-                      <div className={transactionTypeIconStyle(isIncome, isPaid)}>
-                        {isIncome ? <ArrowUpRight size={18} /> : <ArrowDownRight size={18} />}
-                      </div>
-
                       {/* Informações da Transação */}
-                      <div className={transactionDetailsStyle}>
-                        <div className={transactionTitleRowStyle}>
-                          <strong className={transactionTitleStyle(isPaid)}>
+                      <div className="tx-details">
+                        <div className="tx-title">
+                          <strong className="tx-name">
                             {tx.description}
                           </strong>
 
                           {/* Tag de Andamento de Parcelamento */}
                           {tx.category === 'installment' && (
-                            <span className={installmentBadgeStyle}>
+                            <span className="tx-category">
                               <CreditCard size={12} />
                               Parcela {tx.currentInstallment ?? 1}/{tx.totalInstallments ?? 1}
                             </span>
                           )}
 
                           {/* Categoria Traduzida */}
-                          <span className={categoryBadgeStyle}>
+                          <span className="tx-category">
                             {CATEGORY_TRANSLATIONS[tx.category] || tx.category}
                           </span>
 
                           {/* Badge de Status: Pago / Em Atraso / Pendente para despesas | Recebido / A receber para receitas */}
                           {isPaid ? (
-                            <span className={statusBadgePaidStyle}>
+                            <span className="tx-status paid">
                               <Check size={12} />
                               {isIncome ? 'Recebido' : 'Pago'}
                             </span>
                           ) : isOverdue ? (
-                            <span className={statusBadgeOverdueStyle}>
+                            <span className="tx-status overdue">
                               <AlertTriangle size={12} />
                               Em atraso
                             </span>
                           ) : (
-                            <span className={statusBadgePendingStyle}>
+                            <span className="tx-status">
                               <Clock size={12} />
                               {isIncome ? 'A receber' : 'Pendente'}
                             </span>
                           )}
                         </div>
 
-                        <div className={transactionMetaRowStyle}>
+                        <div className="tx-meta">
                           <span className={css({ display: 'inline-flex', alignItems: 'center', gap: '1' })}>
                             <Calendar size={12} />
                             {isIncome ? 'Recebimento' : 'Vencimento'}: {formatDate(tx.date)}
@@ -1181,8 +468,8 @@ export const Dashboard: React.FC = () => {
                       </div>
 
                       {/* Área do Valor Monetário e Ações */}
-                      <div className={transactionAmountAreaStyle}>
-                        <span className={transactionAmountStyle(isIncome, isPaid)}>
+                      <div className="tx-amount-actions">
+                        <span className={isIncome ? "tx-amount income" : "tx-amount"}>
                           {isIncome ? '+' : '-'} {formatCurrency(tx.amount || 0)}
                         </span>
 
@@ -1197,11 +484,11 @@ export const Dashboard: React.FC = () => {
                               setIsIncomeModalOpen(true);
                             } else {
                               setEditingTransaction(tx);
-                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                              document.getElementById('debt-form')?.scrollIntoView({ block: 'start' });
                             }
                           }}
                           aria-label={`Editar ${tx.description}`}
-                          className={actionButtonGhostStyle('edit')}
+                          className="tx-action edit"
                         >
                           <Pencil size={18} />
                         </Button>
@@ -1213,7 +500,7 @@ export const Dashboard: React.FC = () => {
                           variant="ghost"
                           onClick={() => setDeletingTransaction(tx)}
                           aria-label={`Excluir ${tx.description}`}
-                          className={actionButtonGhostStyle('delete')}
+                          className="tx-action delete"
                         >
                           <Trash2 size={18} />
                         </Button>
@@ -1436,7 +723,7 @@ export const Dashboard: React.FC = () => {
           </div>
         )}
       </Modal>
-    </div>
+    </main>
   );
 };
 
