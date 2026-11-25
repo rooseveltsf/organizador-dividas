@@ -29,7 +29,6 @@ import {
 } from '@organizador/shared';
 import { useProfiles } from '../contexts/ProfileContext';
 import { useTransactions } from '../contexts/TransactionContext';
-import { requestApi } from '../api';
 import { Button, Input, ModalLayer, Select } from './ui';
 import './PayslipImportModal.css';
 
@@ -152,7 +151,7 @@ function EntryFields({
 }
 
 function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'isOpen'>) {
-  const { activeProfile } = useProfiles();
+  const { activeProfile, requestProfileApi } = useProfiles();
   const { refreshTransactions } = useTransactions();
   const [step, setStep] = useState<Step>('Arquivo');
   const [pane, setPane] = useState<'document' | 'review'>('review');
@@ -206,7 +205,7 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
   }
 
   async function readPdf(file?: File) {
-    if (!file || busy) return;
+    if (!file || busy || !activeProfile) return;
     setFileError('');
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
       setFileError('Selecione um arquivo no formato PDF.');
@@ -225,7 +224,8 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
     try {
       const form = new FormData();
       form.append('file', file);
-      const data = await requestApi<PayslipParseResult>('/payslip/parse', failure, {
+      const query = new URLSearchParams({ profileId: activeProfile.id });
+      const data = await requestProfileApi<PayslipParseResult>('/payslip/parse?' + query, failure, {
         method: 'POST',
         body: form,
       });
@@ -334,7 +334,7 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
         repeatMonths,
         transactions,
       };
-      const result = await requestApi<{ totalCreated: number }>('/transactions/batch', failure, {
+      const result = await requestProfileApi<{ totalCreated: number }>('/transactions/batch', failure, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

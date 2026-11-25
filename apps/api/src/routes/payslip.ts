@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { PayslipController, uploadPayslipPdf } from '../controllers/payslipController';
 import { ApiResponse } from '@organizador/shared';
+import { authorizeProfile } from '../profileAccess';
 
 const router = Router();
 
@@ -35,7 +36,7 @@ function handleUploadMiddleware(req: Request, res: Response, next: NextFunction)
  * POST /payslip/parse
  * Recebe o PDF no campo "file", analisa coordenadas X/Y e retorna as fontes de renda e descontos estruturados.
  */
-router.post('/parse', handleUploadMiddleware, PayslipController.parse);
+router.post('/parse', authorizeProfile(req => req.query.profileId), handleUploadMiddleware, PayslipController.parse);
 
 export default router;
 

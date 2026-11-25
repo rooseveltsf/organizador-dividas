@@ -63,6 +63,14 @@ const inputRecipe = cva({
         px: '4',
         fontSize: 'md',
       },
+      pin: {
+        height: '12',
+        px: '0',
+        fontSize: 'xl',
+        fontWeight: 'semibold',
+        textAlign: 'center',
+        '&::-ms-reveal': { display: 'none' },
+      },
     },
   },
   defaultVariants: {

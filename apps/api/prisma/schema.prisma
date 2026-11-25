@@ -18,9 +18,23 @@ model Profile {
   secondaryColor String
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
+  pinHash        String?
+  pinAttempts    Int           @default(0)
+  pinAttemptUntil DateTime?
   transactions   Transaction[]
+  sessions       ProfileSession[]
 
   @@map("profiles")
+}
+
+model ProfileSession {
+  tokenHash String   @id
+  profileId String
+  expiresAt DateTime
+  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, expiresAt])
+  @@map("profile_sessions")
 }
 
 model Transaction {

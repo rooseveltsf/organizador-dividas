@@ -1,9 +1,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTransactions } from '../contexts/TransactionContext';
 import { useProfiles } from '../contexts/ProfileContext';
-import { Button, Modal } from '../components/ui';
+import { Button, emptyPin, Modal, PinField } from '../components/ui';
 import { MonthlySummary, formatCurrency } from '../components/MonthlySummary';
 import { NotebookHeader } from '../components/NotebookHeader';
+import { ProfileSecurityActions } from '../components/ProfilePin';
 import { NotebookViews } from '../components/NotebookViews';
 import { TransactionForm } from '../components/TransactionForm';
 import { PayslipImportModal } from '../components/PayslipImportModal';
@@ -124,6 +125,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [isDeleteProfileModalOpen, setIsDeleteProfileModalOpen] = useState(false);
   const [isDeletingProfile, setIsDeletingProfile] = useState(false);
   const [profileDeleteError, setProfileDeleteError] = useState('');
+  const [profileDeletePin, setProfileDeletePin] = useState(emptyPin);
   const monthHeading = useRef<HTMLHeadingElement>(null);
   const ledgerHeading = useRef<HTMLHeadingElement>(null);
   const targetRow = useRef<HTMLTableRowElement>(null);
@@ -249,9 +251,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
           onProfileSwitch();
           selectProfile(null);
         }}><ArrowLeftRight size={14} aria-hidden="true" /> Trocar perfil</Button>
+        <ProfileSecurityActions />
         <button type="button" className="profile-delete" onClick={(event) => {
           event.currentTarget.focus();
           setProfileDeleteError('');
+          setProfileDeletePin(emptyPin);
           setIsDeleteProfileModalOpen(true);
         }} aria-label={'Excluir perfil ' + activeProfile?.name} title="Excluir perfil ativo"><Trash2 size={15} aria-hidden="true" /></button>
       </NotebookHeader>
@@ -524,7 +528,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
         description="Esta ação é permanente e não poderá ser desfeita"
       >
         {activeProfile && (
-          <div className={css({ display: 'flex', flexDirection: 'column', gap: '4' })}>
+          <form className={css({ display: 'flex', flexDirection: 'column', gap: '4' })} onSubmit={async event => {
+            event.preventDefault();
+            if (isDeletingProfile) return;
+            setIsDeletingProfile(true);
+            setProfileDeleteError('');
+            try {
+              await deleteProfile(activeProfile.id, activeProfile.hasPin ? profileDeletePin.join('') : undefined);
+              onProfileDeleted(activeProfile.name);
+            } catch (err) {
+              setProfileDeleteError(err instanceof Error ? err.message : 'Falha ao excluir o perfil. Tente novamente.');
+            } finally {
+              setIsDeletingProfile(false);
+            }
+          }}>
             <div
               className={css({
                 display: 'flex',
@@ -549,7 +566,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             </div>
 
-            <p role="alert" className="transaction-error">{profileDeleteError}</p>
+            {activeProfile.hasPin && <PinField label="PIN atual" value={profileDeletePin} disabled={isDeletingProfile}
+              aria-invalid={Boolean(profileDeleteError)} aria-describedby="profile-delete-error"
+              onValueChange={value => { setProfileDeletePin(value); setProfileDeleteError(''); }} />}
+            <p id="profile-delete-error" role="alert" className="transaction-error">{profileDeleteError}</p>
             <p role="status">{isDeletingProfile ? 'Excluindo o perfil…' : ''}</p>
             <div className={css({ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '3', marginTop: '2' })}>
               <Button
@@ -562,23 +582,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 Cancelar
               </Button>
               <Button
-                type="button"
+                type="submit"
                 variant="danger"
                 aria-disabled={isDeletingProfile || undefined}
-                onClick={async () => {
-                  if (isDeletingProfile) return;
-                  setIsDeletingProfile(true);
-                  setProfileDeleteError('');
-                  try {
-                    await deleteProfile(activeProfile.id);
-                    onProfileDeleted(activeProfile.name);
-                    setIsDeleteProfileModalOpen(false);
-                  } catch (err) {
-                    setProfileDeleteError(err instanceof Error ? err.message : 'Falha ao excluir o perfil. Tente novamente.');
-                  } finally {
-                    setIsDeletingProfile(false);
-                  }
-                }}
                 className={css({
                   display: 'flex',
                   alignItems: 'center',
@@ -589,7 +595,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <span>Sim, excluir perfil</span>
               </Button>
             </div>
-          </div>
+          </form>
         )}
       </Modal>
     </main>

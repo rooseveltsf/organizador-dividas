@@ -1,9 +1,9 @@
 import { createContext, useContext, useState, useLayoutEffect, useMemo, useRef, useCallback, type ReactNode } from 'react';
 import type { Transaction, CreateTransactionDTO, UpdateTransactionInput, PaymentStatus } from '@organizador/shared';
-import { requestApi } from '../api';
 import { useProfiles } from './ProfileContext';
 
 type RowOperation = 'save' | 'status' | 'delete';
+type PendingRow = { profileId: string | undefined; operation: RowOperation };
 type MonthScope = { profileId: string; month: number; year: number };
 type MonthData = {
   scope: MonthScope;
@@ -35,28 +35,38 @@ export interface TransactionContextData {
 
 export const TransactionContext = createContext<TransactionContextData | undefined>(undefined);
 
-function currentMonth(profileId: string | undefined) {
+function currentMonth(selectionVersion: number | null) {
   const today = new Date();
-  return { profileId, month: today.getMonth() + 1, year: today.getFullYear() };
+  return { selectionVersion, month: today.getMonth() + 1, year: today.getFullYear() };
 }
 
 export function TransactionProvider({ children }: { children: ReactNode }) {
-  const profileId = useProfiles().activeProfile?.id;
-  const [selection, setSelection] = useState(() => currentMonth(profileId));
-  if (selection.profileId !== profileId) setSelection(currentMonth(profileId));
+  const { activeProfile, requestProfileApi, selectionVersion } = useProfiles();
+  const profileId = activeProfile?.id;
+  const currentRequest = useRef(requestProfileApi);
+  useLayoutEffect(() => { currentRequest.current = requestProfileApi; }, [requestProfileApi]);
+  const [selection, setSelection] = useState(() => currentMonth(selectionVersion));
+  if (selection.selectionVersion !== selectionVersion) setSelection(currentMonth(selectionVersion));
 
   const { month: selectedMonth, year: selectedYear } = selection;
   const scope = useMemo(
     () => profileId ? { profileId, month: selectedMonth, year: selectedYear } : null,
-    [profileId, selectedMonth, selectedYear],
+    [profileId, selectedMonth, selectedYear, selectionVersion],
   );
   const activeScope = useRef<MonthScope | null>(null);
   const latestLoad = useRef<{ controller: AbortController; done: Promise<void> } | null>(null);
   const [monthData, setMonthData] = useState<MonthData | null>(null);
   const visibleData = monthData?.scope === scope ? monthData : null;
 
-  const rowOperations = useRef(new Map<string, RowOperation>());
-  const [pendingRows, setPendingRows] = useState<ReadonlyMap<string, RowOperation>>(new Map());
+  const rowOperations = useRef(new Map<string, PendingRow>());
+  const [operations, setOperations] = useState<ReadonlyMap<string, PendingRow>>(new Map());
+  const pendingRows = useMemo(() => {
+    const visible = new Map<string, RowOperation>();
+    for (const [id, row] of operations) {
+      if (row.profileId === profileId) visible.set(id, row.operation);
+    }
+    return visible;
+  }, [operations, profileId]);
 
   const setSelectedDate = useCallback((month: number, year: number) => {
     setSelection((previous) => ({ ...previous, month, year }));
@@ -86,7 +96,7 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
     });
     let done = (async () => {
       try {
-        const rows = await requestApi<Transaction[]>('/transactions?' + query, loadErrorMessage, {
+        const rows = await currentRequest.current<Transaction[]>('/transactions?' + query, loadErrorMessage, {
           signal: controller.signal,
         });
         if (!Array.isArray(rows)) throw new Error(loadErrorMessage);
@@ -140,8 +150,8 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
 
   async function mutateRow(id: string, operation: RowOperation, send: () => Promise<unknown>, destinationProfileId?: string) {
     if (rowOperations.current.has(id)) throw new Error('Há uma alteração em andamento neste lançamento.');
-    rowOperations.current.set(id, operation);
-    setPendingRows(new Map(rowOperations.current));
+    rowOperations.current.set(id, { profileId, operation });
+    setOperations(new Map(rowOperations.current));
     try {
       await send();
       const visibleProfileId = activeScope.current?.profileId;
@@ -150,14 +160,14 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
       }
     } finally {
       rowOperations.current.delete(id);
-      setPendingRows(new Map(rowOperations.current));
+      setOperations(new Map(rowOperations.current));
     }
   }
 
   async function addTransaction(data: CreateTransactionDTO) {
     const targetProfileId = data.profileId || profileId;
     if (!targetProfileId) throw new Error('Selecione um perfil para salvar este lançamento.');
-    await requestApi('/transactions', 'Não foi possível salvar o lançamento. Tente novamente.', {
+    await requestProfileApi('/transactions', 'Não foi possível salvar o lançamento. Tente novamente.', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...data, profileId: targetProfileId }),
@@ -166,7 +176,7 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
   }
 
   function updateTransaction(id: string, data: UpdateTransactionInput) {
-    return mutateRow(id, 'save', () => requestApi(
+    return mutateRow(id, 'save', () => requestProfileApi(
       '/transactions/' + encodeURIComponent(id), 'Não foi possível salvar as alterações. Tente novamente.', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -176,7 +186,7 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
   }
 
   function toggleTransactionStatus(id: string, newStatus?: PaymentStatus) {
-    return mutateRow(id, 'status', () => requestApi(
+    return mutateRow(id, 'status', () => requestProfileApi(
       '/transactions/' + encodeURIComponent(id) + '/status', 'Não foi possível alterar a situação do lançamento. Tente novamente.', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -187,7 +197,7 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
 
   function deleteTransaction(id: string, deleteAllGroup = false) {
     const query = deleteAllGroup ? '?deleteAll=true' : '';
-    return mutateRow(id, 'delete', () => requestApi(
+    return mutateRow(id, 'delete', () => requestProfileApi(
       '/transactions/' + encodeURIComponent(id) + query, 'Não foi possível excluir o lançamento. Tente novamente.',
       { method: 'DELETE' },
     ));

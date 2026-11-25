@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { randomBytes } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
 const { existsSync } = require('node:fs');
@@ -8,6 +9,7 @@ const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { test } = require('node:test');
 const { setTimeout: delay } = require('node:timers/promises');
+const { temporarySqlite } = require('./temporary-sqlite.cjs');
 
 const webRoot = resolve(__dirname, '../apps/web');
 const browserPath = [
@@ -82,7 +84,12 @@ async function browserPage(t) {
 const profiles = ['Alfa', 'Beta'].map(name => ({
   id: name.toLowerCase(), name, avatarInitials: name.slice(0, 2),
   primaryColor: '#3b82f6', secondaryColor: '#8b5cf6',
+  hasPin: false,
 }));
+
+function openMockProfile(path) {
+  return profiles.find(profile => path === '/api/profiles/' + profile.id + '/session');
+}
 
 function transaction(query, id, description, status = 'pending') {
   const month = query.get('month').padStart(2, '0');
@@ -127,6 +134,8 @@ test('recuperação de falhas, troca de período e gravações simultâneas no n
     };
     if (request.method === 'GET' && url.pathname === '/api/profiles') {
       respond(profiles, profilesAvailable ? 200 : 503);
+    } else if (request.method === 'GET' && openMockProfile(url.pathname)) {
+      respond({ profile: openMockProfile(url.pathname) });
     } else {
       pending.push({ method: request.method, url, respond });
     }
@@ -307,6 +316,7 @@ test('compromissos futuros no celular preservam o mês ao trocar de perfil e loc
       response.end(JSON.stringify(status === 200 ? { success: true, data } : { success: false }));
     };
     if (url.pathname === '/api/profiles') return respond(profiles);
+    if (openMockProfile(url.pathname)) return respond({ profile: openMockProfile(url.pathname) });
     const profileRows = rows.filter(row => row.profileId === query.get('profileId'));
     if (query.has('startDate')) {
       futureQueries.push(Object.fromEntries(query));
@@ -374,4 +384,233 @@ test('compromissos futuros no celular preservam o mês ao trocar de perfil e loc
   await visible('Fevereiro de 2028');
   await click('Ver Abril de 2028');
   await visible('Sem vínculo com uma série');
+});
+
+test('PIN no navegador isola trocas rápidas, restauração, expiração e bloqueio com SQLite temporário', { timeout: 45000 }, async t => {
+  let cleanDatabase, prisma;
+  t.after(async () => {
+    await prisma?.$disconnect();
+    await cleanDatabase?.();
+  });
+  process.env.DATABASE_URL = await temporarySqlite(cleanup => { cleanDatabase = cleanup; });
+  process.env.PROFILE_PIN_SECRET = randomBytes(32).toString('hex');
+  ({ prisma } = require('../apps/api/dist/prisma'));
+  const { hashPin } = require('../apps/api/dist/profileAccess');
+  await prisma.profile.createMany({
+    data: [{ ...profiles[0], pinHash: await hashPin('0007') }, profiles[1]].map(({ hasPin, ...record }) => record),
+  });
+  const now = new Date();
+  const thisMonth = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 7));
+  const nextMonth = new Date(Date.UTC(now.getFullYear(), now.getMonth() + 1, 7));
+  const rows = [
+    ['alfa', 'Lançamento privado de Alfa', thisMonth],
+    ['beta', 'Lançamento público de Beta', thisMonth],
+    ['alfa', 'Compromisso privado de Alfa', nextMonth],
+    ['beta', 'Compromisso público de Beta', nextMonth],
+  ];
+  await prisma.transaction.createMany({ data: rows.map(([profileId, description, date]) => ({
+    profileId, description, date, type: 'expense', category: 'fixed', amount: 15,
+  })) });
+
+  const webUrl = await previewWeb(t, createServer(require('../apps/api/dist/app').default));
+  const { send, evaluate } = await browserPage(t);
+  await send('Page.enable');
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+    const originalFetch = fetch.bind(window);
+    window.fetch = (url, options) => {
+      if (window.holdUnlock && options?.method === 'POST' && String(url).endsWith('/alfa/session')) {
+        window.holdUnlock = false;
+        return originalFetch(url, options).then(response => new Promise(resolve => {
+          window.releaseUnlock = () => resolve(response);
+        }));
+      }
+      return originalFetch(url, options);
+    };
+  ` });
+  await send('Page.navigate', { url: webUrl });
+  const visible = text => waitFor(() => evaluate('document.body.innerText.includes(' + JSON.stringify(text) + ')'), text);
+  const absent = async text => assert.equal(await evaluate('document.body.innerText.includes(' + JSON.stringify(text) + ')'), false, text);
+  const click = async label => {
+    const button = `[...document.querySelectorAll('button')].find(button =>
+      (button.ariaLabel === ${JSON.stringify(label)} || button.textContent.trim() === ${JSON.stringify(label)})
+      && button.getClientRects().length)`;
+    await waitFor(() => evaluate('Boolean(' + button + ')'), label);
+    await evaluate(button + '.click()');
+  };
+  const pinInputs = (label = 'PIN do perfil') => `[...document.querySelectorAll('dialog[open] fieldset')]
+    .find(group => group.querySelector(':scope > legend')?.textContent.trim() === ${JSON.stringify(label)})
+    ?.querySelectorAll('input[type="password"]')`;
+  const pinValues = () => evaluate(`Array.from(${pinInputs()}, input => input.value)`);
+  const focusedDigit = () => evaluate(`Array.from(${pinInputs()}).indexOf(document.activeElement)`);
+
+  async function press(key, windowsVirtualKeyCode, modifiers = 0) {
+    await send('Input.dispatchKeyEvent', {
+      type: 'keyDown', key, windowsVirtualKeyCode, modifiers,
+      ...(key === 'Enter' && { text: '\r', unmodifiedText: '\r' }),
+    });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key, windowsVirtualKeyCode, modifiers });
+  }
+
+  async function pastePin(label, value, index = 0) {
+    const inputs = pinInputs(label);
+    await waitFor(() => evaluate(`(${inputs})?.length === 4`), label);
+    await evaluate(`(() => {
+      const input = (${inputs})[${index}];
+      input.focus();
+      const clipboardData = new DataTransfer();
+      clipboardData.setData('text/plain', ${JSON.stringify(value)});
+      input.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+    })()`);
+  }
+
+  async function submitPin(pin, index) {
+    await pastePin('PIN do perfil', pin, index);
+    await click('Desbloquear');
+  }
+
+  async function fillText(label, value) {
+    const field = `[...document.querySelectorAll('dialog[open] label')].find(label =>
+      label.textContent.trim() === ${JSON.stringify(label)})?.control`;
+    await waitFor(() => evaluate('Boolean(' + field + ')'), label);
+    await evaluate(`(() => { const input = ${field}; input.focus(); input.select(); })()`);
+    await send('Input.insertText', { text: value });
+  }
+  async function reload() {
+    await evaluate('window.pinReloadPending = true');
+    await send('Page.reload');
+    await waitFor(async () => {
+      try {
+        return await evaluate('!window.pinReloadPending && document.readyState === "complete"');
+      } catch {
+        return false;
+      }
+    }, 'uma nova página após recarregar');
+  }
+  const sessionCount = () => prisma.profileSession.count({ where: { profileId: 'alfa' } });
+
+  await click('Entrar no perfil Alfa');
+  await visible('Desbloquear Alfa');
+  const digitAttributes = await evaluate(`Array.from(${pinInputs()}, input =>
+    [input.type, input.inputMode, input.maxLength, input.required, input.ariaLabel])`);
+  assert.deepEqual(digitAttributes, Array.from({ length: 4 }, (_, index) =>
+    ['password', 'numeric', 1, true, `Dígito ${index + 1} de 4`]));
+  const { nodes } = await send('Accessibility.getFullAXTree');
+  assert.ok(nodes.some(node => node.role.value === 'group' && node.name?.value === 'PIN do perfil'));
+  assert.equal(await focusedDigit(), 0);
+  await send('Emulation.setDeviceMetricsOverride', { width: 320, height: 568, deviceScaleFactor: 1, mobile: true });
+  assert.deepEqual(await evaluate(`Array.from(${pinInputs()}, input =>
+    [input.offsetWidth, input.offsetHeight, getComputedStyle(input).textAlign])`),
+  Array.from({ length: 4 }, () => [48, 48, 'center']));
+  assert.equal(await evaluate('document.documentElement.scrollWidth'), 320);
+  await send('Emulation.clearDeviceMetricsOverride');
+  await send('Input.insertText', { text: 'x' });
+  assert.deepEqual(await pinValues(), ['', '', '', '']);
+  await press('Tab', 9);
+  assert.equal(await focusedDigit(), 1);
+  await press('Tab', 9, 8);
+  assert.equal(await focusedDigit(), 0);
+  await press('9', 57);
+  await send('Input.insertText', { text: '9' });
+  assert.deepEqual(await pinValues(), ['9', '9', '', '']);
+  assert.equal(await focusedDigit(), 2);
+  assert.equal(await evaluate(`document.querySelector('dialog[open] form').checkValidity()`), false);
+  await press('Backspace', 8);
+  assert.deepEqual(await pinValues(), ['9', '', '', '']);
+  assert.equal(await focusedDigit(), 1);
+  await press('ArrowLeft', 37);
+  assert.equal(await focusedDigit(), 0);
+  await send('Input.insertText', { text: '9' });
+  assert.equal(await focusedDigit(), 1);
+  for (let index = 1; index < 4; index++) await send('Input.insertText', { text: '9' });
+  assert.deepEqual(await pinValues(), ['9', '9', '9', '9']);
+  await press('Enter', 13);
+  await visible('PIN incorreto.');
+  assert.ok(await evaluate(`document.querySelector('dialog[open] [role="alert"]').textContent.includes('PIN incorreto')`));
+  assert.ok(await evaluate(`Array.from(${pinInputs()}).every(input => input.ariaInvalid === 'true'
+    && input.getAttribute('aria-describedby')?.includes(document.querySelector('dialog[open] [role="alert"]').id))`));
+  assert.deepEqual(await pinValues(), ['', '', '', '']);
+  assert.equal(await focusedDigit(), 0);
+  await evaluate('window.holdUnlock = true');
+  await pastePin('PIN do perfil', '00 07', 2);
+  assert.deepEqual(await pinValues(), ['0', '0', '0', '7']);
+  await click('Desbloquear');
+  await waitFor(() => evaluate('typeof window.releaseUnlock === "function"'), 'resposta de desbloqueio retida');
+  assert.equal(await sessionCount(), 1);
+  await click('Cancelar');
+  await click('Entrar no perfil Beta');
+  await visible('Lançamento público de Beta');
+  await evaluate('window.releaseUnlock()');
+  await waitFor(async () => await sessionCount() === 0, 'revogação do desbloqueio obsoleto');
+  await absent('Lançamento privado de Alfa');
+
+  await click('Compromissos futuros');
+  await visible('Compromisso público de Beta');
+  await evaluate(`(() => {
+    const select = document.querySelector('select[aria-label="Perfil"]');
+    select.value = 'alfa';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await visible('Desbloquear Alfa');
+  await absent('Compromisso público de Beta');
+  await absent('Compromisso privado de Alfa');
+  await submitPin('0007');
+  await visible('Compromisso privado de Alfa');
+  await click('Extrato');
+  await visible('Lançamento privado de Alfa');
+  await reload();
+  await visible('Lançamento privado de Alfa');
+  await absent('Desbloquear Alfa');
+
+  await prisma.profileSession.updateMany({ where: { profileId: 'alfa' }, data: { expiresAt: new Date(0) } });
+  await reload();
+  await visible('A sessão terminou. Digite o PIN para entrar.');
+  await absent('Lançamento privado de Alfa');
+  await submitPin('0007');
+  await visible('Lançamento privado de Alfa');
+  await click('Bloquear perfil');
+  await visible('Perfil bloqueado.');
+  await absent('Lançamento privado de Alfa');
+  await waitFor(async () => await sessionCount() === 0, 'revogação pelo cabeçalho');
+  await reload();
+  await visible('Desbloquear Alfa');
+  await absent('Lançamento privado de Alfa');
+
+  await click('Cancelar');
+  await click('Criar perfil');
+  await fillText('Nome do perfil', 'Gama');
+  await evaluate(`document.querySelector('dialog[open] input[type="checkbox"]').click()`);
+  await pastePin('Novo PIN', '0007');
+  await pastePin('Confirmar novo PIN', '7000');
+  await click('Criar e entrar');
+  await visible('Os PINs precisam ser iguais.');
+  await pastePin('Confirmar novo PIN', '0007');
+  await click('Criar e entrar');
+  await visible('Perfil Gama criado.');
+
+  await click('Configurações do perfil');
+  await pastePin('PIN atual', '0007');
+  await pastePin('Novo PIN', '0008');
+  await pastePin('Confirmar novo PIN', '0008');
+  await click('Salvar PIN');
+  await visible('Desbloquear Gama');
+  await submitPin('0008');
+
+  await click('Configurações do perfil');
+  await click('Remover PIN');
+  await pastePin('PIN atual', '0008');
+  await click('Confirmar remoção');
+  await waitFor(async () => await prisma.profile.count({ where: { name: 'Gama', pinHash: null } }) === 1, 'remoção do PIN');
+  await waitFor(() => evaluate(`!document.querySelector('dialog[open]')
+    && document.querySelector('.active-profile')?.textContent.includes('Gama')
+    && !document.querySelector('button[aria-label="Bloquear perfil"]')`), 'perfil reaberto sem PIN');
+  await click('Configurações do perfil');
+  await pastePin('Novo PIN', '0123');
+  await pastePin('Confirmar novo PIN', '0123');
+  await click('Salvar PIN');
+  await visible('Desbloquear Gama');
+  await submitPin('0123');
+  await click('Excluir perfil Gama');
+  await pastePin('PIN atual', '0123');
+  await click('Sim, excluir perfil');
+  await visible('Perfil Gama excluído.');
 });

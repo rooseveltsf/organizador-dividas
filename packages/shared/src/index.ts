@@ -46,11 +46,25 @@ export interface Profile {
   /** Cor secundária do perfil em hexadecimal para gradientes e destaques (ex: "#EC4899") */
   secondaryColor: string;
 
-  /** Data de criação em formato ISO 8601 */
-  createdAt: string;
+  hasPin: boolean;
+}
 
-  /** Data da última atualização em formato ISO 8601 */
+export interface ProfileDetails extends Profile {
+  createdAt: string;
   updatedAt: string;
+  pendingCountCurrentMonth: number;
+  pendingAmountCurrentMonth: number;
+}
+
+export interface ProfileSession {
+  token: string;
+  expiresAt: string;
+  expiresInMs: number;
+}
+
+export interface ProfileSessionStatus {
+  profile: Profile;
+  session?: Omit<ProfileSession, 'token'>;
 }
 
 export interface CreateProfileDTO {
@@ -58,9 +72,17 @@ export interface CreateProfileDTO {
   primaryColor: string;
   secondaryColor: string;
   avatarInitials?: string;
+  pin?: string;
+  pinConfirmation?: string;
 }
 
-export type UpdateProfileDTO = Partial<CreateProfileDTO>;
+export type UpdateProfileDTO = Partial<Omit<CreateProfileDTO, 'pin' | 'pinConfirmation'>>;
+
+export type UpdateProfilePinDTO =
+  | { pin: string; pinConfirmation: string; currentPin?: string }
+  | { pin: null; currentPin: string };
+
+export const profilePinSchema = z.string().length(4).regex(/^[0-9]{4}$/, 'Use quatro dígitos de 0 a 9.');
 
 // ============================================================================
 // Entidade Principal: Transaction
@@ -200,8 +222,8 @@ export interface BatchCreateTransactionDTO {
 // Schemas de Validação (Zod) e Tipos Inferidos
 // ============================================================================
 
-export const createProfileSchema = z.object({
-  name: z.string().trim().min(1, 'O nome do perfil é obrigatório'),
+const profileIdentitySchema = z.object({
+  name: z.string().trim().min(2, 'O nome deve ter pelo menos 2 caracteres'),
   primaryColor: z
     .string()
     .trim()
@@ -213,7 +235,15 @@ export const createProfileSchema = z.object({
   avatarInitials: z.string().trim().min(1).max(4).optional(),
 });
 
-export const updateProfileSchema = createProfileSchema.partial();
+export const createProfileSchema = profileIdentitySchema.extend({
+  pin: profilePinSchema.optional(),
+  pinConfirmation: profilePinSchema.optional(),
+}).refine(({ pin, pinConfirmation }) => pin === pinConfirmation, {
+  message: 'Confirme o mesmo PIN de quatro dígitos.',
+  path: ['pinConfirmation'],
+});
+
+export const updateProfileSchema = profileIdentitySchema.partial();
 
 export const calendarDateSchema = z.string().trim().pipe(
   z.union([z.iso.date(), z.iso.datetime({ offset: true, local: true })],

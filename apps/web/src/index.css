@@ -136,6 +136,10 @@ button:disabled, button[aria-disabled="true"] { cursor: not-allowed; opacity: .6
 .profile-delete, .month-arrows button, .settle-button { display: inline-grid; place-items: center; min-width: 36px; height: 36px; border-radius: 4px; cursor: pointer; color: var(--colors-slate-500); }
 .profile-entry .profile-delete { position: absolute; top: .6rem; right: .6rem; }
 .profile-delete:hover, .tx-action.delete:hover { background: var(--colors-expense-50); color: var(--colors-expense-700); }
+.profile-tool { display: inline-grid; place-items: center; min-width: 36px; height: 36px; border-radius: 4px; cursor: pointer; color: var(--colors-slate-600); }
+.profile-tool:hover { background: var(--colors-slate-100); color: var(--colors-slate-900); }
+.profile-pin-option { display: flex; align-items: center; gap: .5rem; }
+.directory-lock { display: inline-block; vertical-align: -.1em; color: var(--colors-slate-600); }
 .profile-preview { padding: 1rem; border-block: 1px solid var(--colors-slate-200); }
 .palette-pair { display: inline-block; flex: none; width: 20px; height: 15px; border-right: 10px solid; border-radius: 2px; }
 /* Painel mensal */

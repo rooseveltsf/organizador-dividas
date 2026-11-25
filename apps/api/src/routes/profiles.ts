@@ -1,31 +1,23 @@
 import { Router } from 'express';
 import { ProfileController } from '../controllers/profileController';
+import { authorizeProfile } from '../profileAccess';
 
 const router = Router();
 
-/**
- * GET /profiles
- * Lista todos os perfis com contagem de pendências do mês vigente
- */
+const profile = Router({ mergeParams: true });
+
 router.get('/', ProfileController.list);
-
-/**
- * POST /profiles
- * Criação de perfil com validação Zod e geração automática de iniciais
- */
 router.post('/', ProfileController.create);
+router.post('/:id/session', ProfileController.enter);
+router.delete('/:id/session', ProfileController.leave);
 
-/**
- * PUT /profiles/:id
- * Atualização dos dados cadastrais do perfil (nome e cores)
- */
-router.put('/:id', ProfileController.update);
-
-/**
- * DELETE /profiles/:id
- * Remoção do perfil com exclusão em cascata das transações vinculadas
- */
-router.delete('/:id', ProfileController.delete);
+// Monte as rotas com dados do perfil, inclusive planejamento, neste router.
+router.use('/:id', authorizeProfile(req => req.params.id), profile);
+profile.get('/', ProfileController.details);
+profile.put('/', ProfileController.update);
+profile.delete('/', ProfileController.delete);
+profile.get('/session', ProfileController.status);
+profile.put('/pin', ProfileController.updatePin);
 
 export default router;
 

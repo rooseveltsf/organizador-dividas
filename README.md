@@ -19,6 +19,7 @@
 - [Guia de Instalação e Execução](#-guia-de-instalação-e-execução)
   - [Pré-requisitos](#pré-requisitos)
   - [Passo a Passo](#passo-a-passo)
+  - [Configuração e recuperação do PIN](#configuração-e-recuperação-do-pin)
   - [Scripts Disponíveis](#scripts-disponíveis)
 - [Rotas da API REST](#-rotas-da-api-rest)
 - [Design System & Estilização (Panda CSS)](#-design-system--estilização-panda-css)
@@ -81,7 +82,8 @@ organizador-dividas/
 - Criação de perfis independentes (ex: membros da família ou pessoa física/jurídica).
 - Cada perfil possui **Cor Primária** e **Cor Secundária** em formato hexadecimal.
 - Ao selecionar um perfil, variáveis CSS nativas (`--profile-primary`, `--profile-secondary`, `--profile-primary-soft`, etc.) são injetadas em `:root`, alterando instantaneamente botões, gráficos, avatares e destaques visuais.
-- **Exclusão de Perfil Segura**: Opção de excluir perfis diretamente na tela de seleção inicial ou no painel do Dashboard com modal de confirmação e exclusão em cascata de todas as suas transações vinculadas.
+- **PIN opcional.** Ative na criação ou nas configurações do perfil. Use quatro dígitos e confirme o PIN novo, inclusive se começar com zero. O cabeçalho permite bloquear o perfil. Alteração, remoção e exclusão de um perfil protegido exigem o PIN atual.
+- **Exclusão de perfil.** Perfis sem PIN podem ser excluídos pela lista de perfis. Abra o Extrato para excluir um perfil protegido e confirme com o PIN atual. A exclusão remove os lançamentos vinculados.
 
 ### 2. Dashboard Financeiro Mensal
 - **4 Cards de Métricas em Tempo Real**:
@@ -205,10 +207,11 @@ organizador-dividas/
    DATABASE_URL="file:./dev.db"
    ```
 
-4. **Execute as migrações do banco de dados (Prisma):**
+4. **Atualize o esquema do SQLite local.** Pare a API e faça uma cópia do arquivo do banco antes de atualizar uma instalação existente.
    ```bash
-   npm run prisma:migrate -w @organizador/api
+   npm exec -w @organizador/api -- prisma db push
    ```
+   O SQLite local distribuído com o projeto já contém tabelas e usa esse comando para atualizar o esquema. Em um banco que já acompanha o histórico do Prisma, aplique a migração `20261125000000_add_profile_pin` com `npm exec -w @organizador/api -- prisma migrate deploy`.
    *(Opcional)* Para abrir a interface visual do banco de dados:
    ```bash
    npm run prisma:studio -w @organizador/api
@@ -233,6 +236,39 @@ publicar o frontend e a API em origens separadas, defina
 `VITE_API_BASE_URL=https://api.exemplo.com/api` no ambiente do build ou em
 `apps/web/.env.production.local`.
 
+### Configuração e recuperação do PIN
+
+Gere um segredo de 32 bytes no ambiente local antes de ativar a proteção.
+
+```bash
+node -p "require('node:crypto').randomBytes(32).toString('hex')"
+```
+
+Adicione o valor retornado como `PROFILE_PIN_SECRET` ao `apps/api/.env` e reinicie a API. Guarde uma cópia desse segredo separada do SQLite. O servidor usa HMAC com o segredo e, em seguida, scrypt com um sal aleatório por PIN. O SQLite guarda o hash salgado. Perfis existentes começam sem PIN.
+
+O limite é de cinco verificações por perfil. A quinta tentativa incorreta abre uma espera de cinco minutos. O contador fica no SQLite e é compartilhado entre desbloqueio, alteração, remoção e exclusão. A resposta `429` indica o tempo restante em `Retry-After`.
+
+Após validar o PIN, a API emite um token aleatório que vale por oito horas e fica vinculado ao perfil. O SQLite guarda o hash do token. A interface guarda o token na aba, usa `Authorization: Bearer <token>` nas requisições e confirma a sessão com o servidor ao recarregar. O ID salvo no navegador lembra a seleção. Bloquear, sair ou trocar de perfil encerra a sessão da aba. Alterar ou remover o PIN revoga todas as sessões daquele perfil. Use HTTPS quando servir o app fora da máquina local.
+
+Se perder o segredo, restaure a cópia de `PROFILE_PIN_SECRET`. Se esquecer o PIN ou perder o segredo sem uma cópia, o operador local pode remover a proteção do perfil diretamente no SQLite.
+
+1. Pare a API e faça uma cópia de segurança do SQLite. Use o arquivo apontado por `DATABASE_URL`, que por padrão é `apps/api/prisma/dev.db`.
+2. Abra o arquivo no cliente SQLite local e consulte `SELECT id, name FROM profiles;` para identificar o perfil.
+3. Substitua `ID_DO_PERFIL` pelo ID escolhido e execute esta transação SQLite.
+
+   ```sql
+   BEGIN IMMEDIATE;
+   DELETE FROM profile_sessions WHERE profileId = 'ID_DO_PERFIL';
+   UPDATE profiles
+      SET pinHash = NULL, pinAttempts = 0, pinAttemptUntil = NULL
+    WHERE id = 'ID_DO_PERFIL';
+   COMMIT;
+   ```
+
+4. Configure um segredo novo se o anterior foi perdido. Reinicie a API, abra o perfil e defina um novo PIN. Os lançamentos são preservados. Se trocou o segredo, faça a recuperação individual dos demais perfis que ainda usam o segredo anterior.
+
+O procedimento requer acesso direto ao SQLite local. O operador deve proteger o arquivo e suas cópias, que contêm os lançamentos financeiros.
+
 ---
 
 ### Scripts Disponíveis
@@ -246,14 +282,14 @@ Na raiz do projeto (`package.json`), você pode executar:
 | `npm run dev:api` | Inicia somente a API com recarregamento a quente (`ts-node-dev`). |
 | `npm run dev:web` | Inicia somente o Frontend Vite. |
 | `npm run build` | Compila os contratos compartilhados, gera tokens do Panda CSS e builda a API e Frontend para produção. |
-| `npm test` | Verifica as regras financeiras e de datas com SQLite temporário e porta HTTP efêmera. |
+| `npm test` | Verifica proteção por PIN, regras financeiras e datas com SQLite temporário e porta HTTP efêmera. |
 | `npm run clean` | Remove os diretórios `dist` de todos os workspaces. |
 
 A suíte de auditoria usa Node.js 22.13 ou superior e o cliente Prisma gerado com `npm run prisma:generate -w @organizador/api`. O banco temporário é criado a partir do schema e removido ao fim da execução.
 
-Para testar falhas, concorrência e navegação de compromissos futuros no frontend, rode `npm run build -w @organizador/web`
-e depois `node --test tests/api-reliability.browser.cjs`. A suíte usa uma API
-simulada com dados fictícios e um navegador Chromium local. Defina
+Para testar falhas, concorrência, PIN e navegação de compromissos futuros, rode `npm test` e `npm run build -w @organizador/web`.
+Depois execute `node --test tests/api-reliability.browser.cjs`. A suíte usa um navegador Chromium local.
+O fluxo de PIN usa a API real com SQLite temporário. Os cenários de falha e temporização usam respostas simuladas. Defina
 `BROWSER_PATH` se o executável estiver fora dos caminhos padrão do teste.
 
 ---
@@ -265,11 +301,17 @@ A API roda por padrão na porta `3000` e atende nos prefixos `/` e `/api`:
 ### Perfis de Usuário
 | Método | Rota | Descrição |
 |---|---|---|
-| `GET` | `/api/profiles` | Lista todos os perfis cadastrados. |
-| `POST` | `/api/profiles` | Cria um novo perfil (`name`, `primaryColor`, `secondaryColor`). |
-| `GET` | `/api/profiles/:id` | Retorna os detalhes de um perfil por ID. |
+| `GET` | `/api/profiles` | Lista ID, identidade visual e `hasPin`. |
+| `POST` | `/api/profiles` | Cria um perfil. Para protegê-lo, envie `pin` e `pinConfirmation`. |
+| `GET` | `/api/profiles/:id` | Retorna os detalhes e o resumo financeiro do perfil. |
 | `PUT` | `/api/profiles/:id` | Atualiza dados e cores do perfil. |
-| `DELETE` | `/api/profiles/:id` | Remove o perfil e todas as suas transações vinculadas em cascata. |
+| `DELETE` | `/api/profiles/:id` | Exclui o perfil e seus lançamentos. Perfis protegidos exigem `currentPin`. |
+| `GET` | `/api/profiles/:id/session` | Confirma o acesso e informa quando a sessão protegida expira. |
+| `POST` | `/api/profiles/:id/session` | Valida `pin` e abre uma sessão para o perfil protegido. |
+| `DELETE` | `/api/profiles/:id/session` | Revoga a sessão identificada pelo token. |
+| `PUT` | `/api/profiles/:id/pin` | Define ou altera com `pin` e `pinConfirmation`. Envie `pin: null` para remover. Se já houver PIN, envie também `currentPin`. |
+
+Rotas de dados de perfis protegidos exigem sessão válida para o perfil. Para adicionar rotas de planejamento em `/profiles/:id/planning`, use o router protegido em `apps/api/src/routes/profiles.ts`. Compromissos futuros usa a consulta protegida de transações.
 
 ### Transações & Dívidas
 | Método | Rota | Descrição |
@@ -279,6 +321,7 @@ A API roda por padrão na porta `3000` e atende nos prefixos `/` e `/api`:
 | `POST` | `/api/transactions/batch` | Criação em lote de transações (usado no contracheque) com projeção futura. |
 | `PATCH`| `/api/transactions/:id/status` | Alterna status (`pending` / `paid` / `overdue`) e preenche `paymentDate`. |
 | `PUT`  | `/api/transactions/:id` | Atualiza os dados de uma transação existente. |
+| `PATCH` | `/api/transactions/:id` | Atualiza parcialmente os dados de uma transação existente. |
 | `DELETE`| `/api/transactions/:id?deleteAll=true` | Exclui o selecionado e os futuros da série no mesmo perfil. Sem o parâmetro, exclui somente o selecionado. |
 
 Para parcelamentos, os dois endpoints de criação recebem `amount` em reais. O padrão é o valor de cada parcela. Com `amountMode: "total"`, o valor representa a compra inteira e os centavos restantes vão para as primeiras parcelas da numeração original. Por exemplo, R$ 100,00 em três parcelas gera R$ 33,34, R$ 33,33 e R$ 33,33. As séries ficam limitadas a 120 parcelas ou meses.
@@ -288,7 +331,7 @@ Envie vencimentos e pagamentos como `YYYY-MM-DD`. A API também aceita datas ISO
 ### Leitura de Contracheque (PDF)
 | Método | Rota | Descrição |
 |---|---|---|
-| `POST` | `/api/payslip/parse` | Recebe arquivo PDF no campo `file` (`multipart/form-data`) e retorna totais, rubricas e parcelas extraídas. |
+| `POST` | `/api/payslip/parse?profileId={id}` | Verifica o acesso ao perfil e recebe o PDF no campo `file` (`multipart/form-data`). Retorna totais, rubricas e parcelas extraídas. |
 
 ### Health Check
 | Método | Rota | Descrição |

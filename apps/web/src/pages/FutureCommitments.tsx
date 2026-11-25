@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, List } from 'lucide-react';
 import type { Transaction } from '@organizador/shared';
-import { requestApi } from '../api';
 import { firstFutureMonth, formatDate, monthLabel, shiftMonth } from '../calendar';
 import { formatCurrency, formatCurrencyCents } from '../components/MonthlySummary';
 import { NotebookHeader } from '../components/NotebookHeader';
+import { ProfileSecurityActions } from '../components/ProfilePin';
 import { NotebookViews } from '../components/NotebookViews';
 import { Button, Select } from '../components/ui';
 import { useProfiles, useTransactions } from '../contexts';
@@ -49,6 +49,7 @@ export function FutureCommitments({ onStatement, ...monthProps }: FutureCommitme
             {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
           </Select>
         </div>
+        <ProfileSecurityActions />
       </NotebookHeader>
       <NotebookViews current="future" onChange={onStatement} />
 
@@ -67,6 +68,7 @@ function FutureMonth({ profileId, month, onMonthChange, onOpenTransaction }:
   const firstMonth = firstFutureMonth();
   const selectedMonth = month < firstMonth ? firstMonth : month;
   const { pendingRows } = useTransactions();
+  const { requestProfileApi } = useProfiles();
   const hasPendingWrites = pendingRows.size > 0;
   const [result, setResult] = useState<{ rows: Transaction[] } | { error: true } | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -79,7 +81,7 @@ function FutureMonth({ profileId, month, onMonthChange, onOpenTransaction }:
     const query = new URLSearchParams({ profileId, type: 'expense', startDate: firstMonth + '-01' });
     async function load() {
       try {
-        const rows = await requestApi<Transaction[]>('/transactions?' + query, loadError, { signal: controller.signal });
+        const rows = await requestProfileApi<Transaction[]>('/transactions?' + query, loadError, { signal: controller.signal });
         if (!Array.isArray(rows)) throw new Error(loadError);
         if (!controller.signal.aborted) setResult({ rows });
       } catch {
@@ -88,7 +90,7 @@ function FutureMonth({ profileId, month, onMonthChange, onOpenTransaction }:
     }
     void load();
     return () => controller.abort();
-  }, [profileId, firstMonth, hasPendingWrites, attempt]);
+  }, [profileId, firstMonth, hasPendingWrites, attempt, requestProfileApi]);
 
   const summary = useMemo(() => result && 'rows' in result
     ? summarizeCommitments(result.rows, profileId, selectedMonth) : null, [result, profileId, selectedMonth]);

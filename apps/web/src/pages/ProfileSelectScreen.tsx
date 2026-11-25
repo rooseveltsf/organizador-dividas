@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import { flushSync } from 'react-dom';
-import { ArrowRight, Check, Notebook, Plus, Search, Trash2 } from 'lucide-react';
+import { ArrowRight, Check, Lock, Notebook, Plus, Search, Trash2 } from 'lucide-react';
 import type { Profile } from '@organizador/shared';
 import { useProfiles } from '../contexts/ProfileContext';
 import { NotebookHeader } from '../components/NotebookHeader';
-import { Button, Input, Modal } from '../components/ui';
+import { ProfileEntryDialog } from '../components/ProfilePin';
+import { Button, emptyPin, Input, Modal, PinField } from '../components/ui';
 import './ProfileSelectScreen.css';
 
 const COLOR_PRESETS = [
@@ -51,7 +52,7 @@ function monogramInk(hex: string) {
   return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? '#000000' : '#FFFFFF';
 }
 
-type ProfileIdentity = Pick<Profile, 'name' | 'avatarInitials' | 'primaryColor' | 'secondaryColor'>;
+type ProfileIdentity = Omit<Profile, 'id'>;
 
 function ProfileLabel({ profile }: { profile: ProfileIdentity }) {
   const cover = fullHex(profile.primaryColor) || defaultColors.primary;
@@ -69,7 +70,8 @@ function ProfileLabel({ profile }: { profile: ProfileIdentity }) {
         {profile.avatarInitials || initials(profile.name)}
       </span>
       <span className="directory-text">
-        <span className="directory-name">{profile.name}</span>
+        <span className="directory-name">{profile.name} {profile.hasPin &&
+          <Lock className="directory-lock" size={15} aria-hidden="true" />}</span>
         <span className="directory-enter">
           Entrar no perfil <ArrowRight size={15} aria-hidden="true" />
         </span>
@@ -133,10 +135,15 @@ function CreateProfileDialog({ onClose, onCreated }: { onClose: () => void; onCr
   const [name, setName] = useState('');
   const [primaryColor, setPrimary] = useState(defaultColors.primary);
   const [secondaryColor, setSecondary] = useState(defaultColors.secondary);
+  const [protect, setProtect] = useState(false);
+  const [pin, setPin] = useState(emptyPin);
+  const [pinConfirmation, setConfirmation] = useState(emptyPin);
+  const [pinMismatch, setPinMismatch] = useState(false);
   const [error, setError] = useState('');
   const [invalidName, setInvalidName] = useState(false);
   const [saving, setSaving] = useState(false);
   const nameInput = useRef<HTMLInputElement>(null);
+  const confirmation = useRef<HTMLInputElement>(null);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -146,6 +153,13 @@ function CreateProfileDialog({ onClose, onCreated }: { onClose: () => void; onCr
       nameInput.current?.focus();
       return;
     }
+    const newPin = pin.join('');
+    const confirmationPin = pinConfirmation.join('');
+    if (protect && newPin !== confirmationPin) {
+      flushSync(() => setPinMismatch(true));
+      confirmation.current?.focus();
+      return;
+    }
     setError('');
     setSaving(true);
     try {
@@ -153,6 +167,7 @@ function CreateProfileDialog({ onClose, onCreated }: { onClose: () => void; onCr
         name: name.trim(),
         primaryColor: fullHex(primaryColor),
         secondaryColor: fullHex(secondaryColor),
+        ...(protect ? { pin: newPin, pinConfirmation: confirmationPin } : {}),
       });
       onCreated(profile.name);
     } catch (err) {
@@ -243,6 +258,23 @@ function CreateProfileDialog({ onClose, onCreated }: { onClose: () => void; onCr
               />
             </div>
           </fieldset>
+          <label className="profile-pin-option">
+            <input type="checkbox" checked={protect} onChange={event => {
+              setProtect(event.target.checked);
+              setPin(emptyPin);
+              setConfirmation(emptyPin);
+              setPinMismatch(false);
+              setError('');
+            }} />
+            Proteger com PIN
+          </label>
+          {protect && <>
+            <PinField label="Novo PIN" hint="Use quatro dígitos." value={pin}
+              onValueChange={value => { setPin(value); setPinMismatch(false); setError(''); }} />
+            <PinField label="Confirmar novo PIN" value={pinConfirmation} ref={confirmation}
+              errorMessage={pinMismatch ? 'Os PINs precisam ser iguais.' : undefined}
+              onValueChange={value => { setConfirmation(value); setPinMismatch(false); setError(''); }} />
+          </>}
           <div className="directory-preview">
             <h3>Prévia na seleção de perfis</h3>
             <div className="directory-card">
@@ -252,6 +284,7 @@ function CreateProfileDialog({ onClose, onCreated }: { onClose: () => void; onCr
                   avatarInitials: initials(name),
                   primaryColor,
                   secondaryColor,
+                  hasPin: protect,
                 }}
               />
             </div>
@@ -281,7 +314,7 @@ export function ProfileSelectScreen({ entryNotice, clearEntryNotice, onProfileCr
   clearEntryNotice: () => void;
   onProfileCreated: (name: string) => void;
 }) {
-  const { profiles, selectProfile, deleteProfile, profileListStatus, fetchProfiles } =
+  const { profiles, selectProfile, entry, accessNotice, deleteProfile, profileListStatus, fetchProfiles } =
     useProfiles();
   const [creating, setCreating] = useState(false);
   const [removing, setRemoving] = useState<Profile | null>(null);
@@ -434,6 +467,7 @@ export function ProfileSelectScreen({ entryNotice, clearEntryNotice, onProfileCr
                       className="directory-link"
                       id={'enter-' + profile.id}
                       aria-label={'Entrar no perfil ' + profile.name}
+                      aria-describedby={profile.hasPin ? 'protected-' + profile.id : undefined}
                       onClick={() => {
                         clearEntryNotice();
                         selectProfile(profile);
@@ -441,7 +475,7 @@ export function ProfileSelectScreen({ entryNotice, clearEntryNotice, onProfileCr
                     >
                       <ProfileLabel profile={profile} />
                     </button>
-                    <button
+                    {profile.hasPin ? <span id={'protected-' + profile.id} className="sr-only">Protegido por PIN</span> : <button
                       className="profile-delete directory-delete"
                       title={'Excluir perfil ' + profile.name}
                       aria-label={'Excluir perfil ' + profile.name}
@@ -452,7 +486,7 @@ export function ProfileSelectScreen({ entryNotice, clearEntryNotice, onProfileCr
                       }}
                     >
                       <Trash2 size={16} aria-hidden="true" />
-                    </button>
+                    </button>}
                   </li>
                 ))}
               </ul>
@@ -471,9 +505,14 @@ export function ProfileSelectScreen({ entryNotice, clearEntryNotice, onProfileCr
         </>
       )}
       <p className="directory-notice" role="status">
-        {notice}
+        {entry?.pending && !entry.needsPin ? 'Verificando o acesso ao perfil…' : accessNotice || notice}
       </p>
-      {creating && <CreateProfileDialog onClose={() => setCreating(false)} onCreated={onProfileCreated} />}
+      <p role="alert" className="directory-error">{entry && !entry.needsPin ? entry.error : ''}</p>
+      {creating && <CreateProfileDialog onClose={() => setCreating(false)} onCreated={name => {
+        setCreating(false);
+        onProfileCreated(name);
+      }} />}
+      <ProfileEntryDialog key={entry?.profile.id} />
       <Modal
         isOpen={Boolean(removing)}
         title="Excluir perfil?"

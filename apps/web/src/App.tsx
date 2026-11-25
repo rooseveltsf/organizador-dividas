@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 import { ProfileProvider, useProfiles, TransactionProvider, useTransactions } from './contexts';
 import { Dashboard, ProfileSelectScreen } from './pages';
 import { FutureCommitments } from './pages/FutureCommitments';
@@ -6,11 +6,31 @@ import { firstFutureMonth } from './calendar';
 import type { Transaction } from '@organizador/shared';
 
 function MainApp() {
-  const { activeProfile } = useProfiles();
-  const { setSelectedDate } = useTransactions();
+  const { activeProfile, selectionVersion } = useProfiles();
   const [profileNotice, setProfileNotice] = useState('');
   const [isFuture, setIsFuture] = useState(false);
   const [futureMonth, setFutureMonth] = useState(firstFutureMonth);
+
+  if (!activeProfile) {
+    return <ProfileSelectScreen entryNotice={profileNotice} clearEntryNotice={() => setProfileNotice('')}
+      onProfileCreated={(name) => setProfileNotice('Perfil ' + name + ' criado.')} />;
+  }
+
+  return (
+    <ProfileWorkspace key={selectionVersion}
+      {...{ profileNotice, setProfileNotice, isFuture, setIsFuture, futureMonth, setFutureMonth }} />
+  );
+}
+
+function ProfileWorkspace({ profileNotice, setProfileNotice, isFuture, setIsFuture, futureMonth, setFutureMonth }: {
+  profileNotice: string;
+  setProfileNotice: Dispatch<SetStateAction<string>>;
+  isFuture: boolean;
+  setIsFuture: Dispatch<SetStateAction<boolean>>;
+  futureMonth: string;
+  setFutureMonth: Dispatch<SetStateAction<string>>;
+}) {
+  const { setSelectedDate } = useTransactions();
   const [transactionTarget, setTransactionTarget] = useState<string | null>(null);
 
   function openTransaction(tx: Transaction) {
@@ -19,18 +39,13 @@ function MainApp() {
     setIsFuture(false);
   }
 
-  if (!activeProfile) {
-    return <ProfileSelectScreen entryNotice={profileNotice} clearEntryNotice={() => setProfileNotice('')}
-      onProfileCreated={(name) => setProfileNotice('Perfil ' + name + ' criado.')} />;
-  }
-
   if (isFuture) {
     return <FutureCommitments month={futureMonth} onMonthChange={setFutureMonth}
       onStatement={() => setIsFuture(false)} onOpenTransaction={openTransaction} />;
   }
 
   return (
-    <Dashboard key={activeProfile.id} entryNotice={profileNotice} onProfileSwitch={() => {
+    <Dashboard entryNotice={profileNotice} onProfileSwitch={() => {
       setProfileNotice('');
       setTransactionTarget(null);
     }}

@@ -1,21 +1,19 @@
 const assert = require('node:assert/strict');
-const { spawnSync } = require('node:child_process');
+const { createHash, randomBytes } = require('node:crypto');
 const { once } = require('node:events');
 const { existsSync, readFileSync } = require('node:fs');
-const { mkdtemp, rm } = require('node:fs/promises');
 const { createRequire } = require('node:module');
-const { tmpdir } = require('node:os');
 const { dirname, join, resolve } = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { after, before, test } = require('node:test');
-const express = require('express');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 const ts = require('typescript');
 const { batchCreateTransactionSchema, createTransactionSchema } = require('@organizador/shared');
+const { temporarySqlite } = require('./temporary-sqlite.cjs');
 
 const originalTimezone = process.env.TZ;
-let directory, server, baseUrl, prisma, web, addMonths, parseLocalDate;
+let cleanDatabase, server, baseUrl, prisma, web, addMonths, parseLocalDate;
 
 // Carrega os componentes reais para SSR, com as classes CSS substituídas.
 const webModules = new Map();
@@ -46,28 +44,11 @@ function loadWeb(filename) {
 }
 
 before(async () => {
-  directory = await mkdtemp(join(tmpdir(), 'organizador-test-'));
-  const databasePath = join(directory, 'test.db');
-  const databaseUrl = 'file:' + databasePath.replaceAll('\\', '/');
-  const setup = spawnSync(process.execPath, [
-    require.resolve('prisma/build/index.js'), 'migrate', 'diff', '--from-empty', '--script',
-    '--to-schema-datamodel', join(__dirname, '../apps/api/prisma/schema.prisma'),
-  ], { env: { ...process.env, DATABASE_URL: databaseUrl }, encoding: 'utf8' });
-  assert.equal(setup.status, 0, setup.error?.message ?? setup.stderr);
-  const database = new DatabaseSync(databasePath);
-  try {
-    database.exec(setup.stdout);
-  } finally {
-    database.close();
-  }
-
-  process.env.DATABASE_URL = databaseUrl;
+  process.env.DATABASE_URL = await temporarySqlite(cleanup => { cleanDatabase = cleanup; });
+  process.env.PROFILE_PIN_SECRET = randomBytes(32).toString('hex');
   ({ prisma } = require('../apps/api/dist/prisma'));
   ({ addMonths, parseLocalDate } = require('../apps/api/dist/controllers/transactionController'));
-  const app = express();
-  app.use(express.json());
-  app.use('/transactions', require('../apps/api/dist/routes/transactions').default);
-  app.use('/profiles', require('../apps/api/dist/routes/profiles').default);
+  const app = require('../apps/api/dist/app').default;
   server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   baseUrl = 'http://127.0.0.1:' + server.address().port;
@@ -88,22 +69,24 @@ after(async () => {
   else process.env.TZ = originalTimezone;
   if (server) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   await prisma?.$disconnect();
-  if (directory) await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  await cleanDatabase?.();
 });
 
-async function request(method, path, body) {
+async function request(method, path, body, token) {
+  const headers = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (token) headers.Authorization = 'Bearer ' + token;
   const response = await fetch(baseUrl + path, {
-    method,
+    method, headers,
     ...(body !== undefined && {
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
   });
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await response.json(), headers: response.headers };
 }
 
-async function expectResponse(method, path, body, status) {
-  const result = await request(method, path, body);
+async function expectResponse(method, path, body, status, token) {
+  const result = await request(method, path, body, token);
   assert.equal(result.status, status, JSON.stringify(result.body));
   return result.body.data;
 }
@@ -122,6 +105,167 @@ const batch = (profileId, transactions, repeatMonths) =>
 const list = (profileId, params = '') =>
   expectResponse('GET', '/transactions?profileId=' + profileId + params, undefined, 200);
 const day = item => item.date.slice(0, 10);
+
+const profileInput = { name: 'Perfil privado', primaryColor: '#123456', secondaryColor: '#654321' };
+const protectedProfile = (pin = '0007') =>
+  expectResponse('POST', '/profiles', { ...profileInput, pin, pinConfirmation: pin }, 201);
+const unlock = async (id, pin = '0007', prefix = '') =>
+  (await expectResponse('POST', prefix + '/profiles/' + id + '/session', { pin }, 200)).session;
+
+test('a migração mantém perfis e lançamentos existentes e começa sem PIN', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`
+      CREATE TABLE profiles (id TEXT PRIMARY KEY);
+      CREATE TABLE transactions (id TEXT PRIMARY KEY, profileId TEXT REFERENCES profiles(id));
+      INSERT INTO profiles VALUES ('existente');
+      INSERT INTO transactions VALUES ('lancamento', 'existente');
+    `);
+    db.exec(readFileSync(join(__dirname,
+      '../apps/api/prisma/migrations/20261125000000_add_profile_pin/migration.sql'), 'utf8'));
+    const existing = db.prepare('SELECT * FROM profiles').get();
+    assert.equal(existing.id, 'existente');
+    assert.equal(existing.pinHash, null);
+    assert.equal(existing.pinAttempts, 0);
+    assert.equal(db.prepare('SELECT profileId FROM transactions').get().profileId, 'existente');
+  } finally {
+    db.close();
+  }
+});
+
+test('PIN opcional, confirmação estrita, zero inicial e DTOs públicos sem dados financeiros', async () => {
+  const open = await profile();
+  assert.equal(open.hasPin, false);
+  assert.equal((await expectResponse('GET', '/profiles/' + open.id + '/session', undefined, 200)).profile.id, open.id);
+  await create(open.id);
+  for (const pin of [7, '007', '0007\n', '０００７', '000７']) {
+    await expectResponse('POST', '/profiles', { ...profileInput, pin, pinConfirmation: pin }, 400);
+  }
+  await expectResponse('POST', '/profiles', { ...profileInput, pin: '0007' }, 400);
+  await expectResponse('POST', '/profiles', { ...profileInput, pin: '0007', pinConfirmation: '7000' }, 400);
+  const first = await protectedProfile();
+  const second = await protectedProfile();
+  for (const data of [first, second, ...await expectResponse('GET', '/api/profiles', undefined, 200)]) {
+    assert.deepEqual(Object.keys(data).sort(), ['avatarInitials', 'hasPin', 'id', 'name', 'primaryColor', 'secondaryColor']);
+  }
+  const stored = await prisma.profile.findMany({ where: { id: { in: [first.id, second.id] } } });
+  assert.match(stored[0].pinHash, /^scrypt-v1:[a-f0-9]{32}:[a-f0-9]{64}$/);
+  assert.notEqual(stored[0].pinHash, stored[1].pinHash);
+  const wrong = await request('POST', '/profiles/' + first.id + '/session', { pin: '7000' });
+  assert.equal(wrong.status, 401);
+  assert.equal(wrong.body.code, 'PROFILE_PIN_INVALID');
+  const session = await unlock(first.id);
+  const sessions = await prisma.profileSession.findMany({ where: { profileId: first.id } });
+  assert.deepEqual(sessions.map(session => session.tokenHash), [createHash('sha256').update(session.token).digest('hex')]);
+  const status = await expectResponse('GET', '/api/profiles/' + first.id + '/session', undefined, 200, session.token);
+  assert.equal(status.profile.hasPin, true);
+  assert.equal(status.session.expiresAt, session.expiresAt);
+  assert.equal(status.session.token, undefined);
+});
+
+test('tentativas concorrentes compartilham o limite entre rotas e a espera termina', async () => {
+  const { id } = await protectedProfile();
+  const attempts = await Promise.all(Array.from({ length: 9 }, (_, index) =>
+    request('POST', (index % 2 ? '/api' : '') + '/profiles/' + id + '/session', { pin: '1234' })));
+  assert.equal(attempts.filter(result => result.status === 401).length, 4);
+  assert.equal(attempts.filter(result => result.status === 429).length, 5);
+  const blocked = await request('POST', '/profiles/' + id + '/session', { pin: '0007' });
+  assert.equal(blocked.status, 429);
+  assert.ok(Number(blocked.headers.get('retry-after')) > 0);
+  await prisma.profile.update({ where: { id }, data: { pinAttemptUntil: new Date(0) } });
+  assert.ok((await unlock(id)).token);
+  assert.equal((await prisma.profile.findUnique({ where: { id } })).pinAttempts, 0);
+});
+
+test('ambos os prefixos barram acesso a todas as rotas protegidas sem sessão ou com sessão de outro perfil', async () => {
+  const { id } = await protectedProfile();
+  const other = await protectedProfile();
+  const publicProfile = await profile();
+  const session = await unlock(id);
+  const otherSession = await unlock(other.id);
+  const data = { profileId: id, ...entry({ category: 'fixed', repeatMonths: 2 }) };
+  const { items } = await expectResponse('POST', '/transactions', data, 201, session.token);
+  const tx = '/transactions/' + items[0].id;
+  const publicTx = '/transactions/' + (await create(publicProfile.id)).id;
+  const detail = '/profiles/' + id;
+  const reads = '/transactions?profileId=' + id;
+  const matrix = [
+    ['GET', detail],
+    ['GET', detail + '/session'],
+    ['GET', detail + '/planning'],
+    ['GET', reads],
+    ['GET', reads + '&type=expense&startDate=2028-01-01'],
+    ['POST', '/transactions', data],
+    ['POST', '/transactions/batch', { profileId: id, transactions: [entry()] }],
+    ['PUT', tx, { profileId: publicProfile.id, amount: 99 }],
+    ['PUT', publicTx, { profileId: id, amount: 99 }],
+    ['PATCH', tx, { amount: 99 }],
+    ['PATCH', tx + '/status', { status: 'paid' }],
+    ['DELETE', tx],
+    ['DELETE', tx + '?deleteAll=true'],
+    ['POST', '/payslip/parse?profileId=' + id],
+    ['PUT', detail, { name: 'Tentativa de edição' }],
+    ['PUT', detail + '/pin', { pin: null, currentPin: '0007' }],
+    ['DELETE', detail, { currentPin: '0007' }],
+  ];
+  for (const prefix of ['', '/api']) {
+    for (const token of [undefined, otherSession.token]) {
+      for (const [method, path, body] of matrix) {
+        const denied = await request(method, prefix + path, body, token);
+        assert.equal(denied.status, 401, method + ' ' + prefix + path);
+        assert.equal(denied.body.code, 'PROFILE_SESSION_REQUIRED');
+        assert.equal(denied.body.data, undefined);
+      }
+    }
+    await expectResponse('GET', prefix + detail, undefined, 200, session.token);
+    await expectResponse('POST', prefix + '/payslip/parse?profileId=' + id, undefined, 400, session.token);
+    const row = await expectResponse('PATCH', prefix + tx + '/status', { status: 'paid' }, 200, session.token);
+    assert.equal(row.profileId, id);
+  }
+  assert.equal((await expectResponse('GET', reads, undefined, 200, session.token)).length, 2);
+  await expectResponse('DELETE', '/api' + tx + '?deleteAll=true', undefined, 200, session.token);
+  assert.equal((await expectResponse('GET', reads, undefined, 200, session.token)).length, 0);
+});
+
+test('a sessão expira, pode ser revogada e o PIN atual protege alteração, remoção e exclusão', async () => {
+  const { id } = await profile();
+  const path = '/profiles/' + id;
+  await expectResponse('PUT', path + '/pin', { pin: '0007', pinConfirmation: '0007' }, 200);
+  await expectResponse('GET', path, undefined, 401);
+
+  const first = await unlock(id);
+  const lockPath = '/api' + path + '/session';
+  await expectResponse('DELETE', lockPath, undefined, 200, first.token);
+  await expectResponse('GET', path, undefined, 401, first.token);
+
+  const expired = await unlock(id);
+  await prisma.profileSession.updateMany({ where: { profileId: id }, data: { expiresAt: new Date(0) } });
+  await expectResponse('GET', lockPath, undefined, 401, expired.token);
+
+  const second = await unlock(id);
+  const concurrent = await unlock(id);
+  const change = { pin: '0456', pinConfirmation: '0456' };
+  await expectResponse('PUT', path + '/pin', change, 400, second.token);
+  await expectResponse('PUT', path + '/pin', { ...change, currentPin: '0008' }, 401, second.token);
+  await expectResponse('PUT', path + '/pin', { ...change, currentPin: '0007' }, 200, second.token);
+  for (const { token } of [second, concurrent]) await expectResponse('GET', path, undefined, 401, token);
+  await expectResponse('POST', path + '/session', { pin: '0007' }, 401);
+
+  const third = await unlock(id, '0456');
+  await expectResponse('DELETE', path, undefined, 400, third.token);
+  await expectResponse('DELETE', path, { currentPin: '0007' }, 401, third.token);
+  await expectResponse('PUT', path + '/pin', { pin: null }, 400, third.token);
+  const removed = await expectResponse('PUT', path + '/pin', { pin: null, currentPin: '0456' }, 200, third.token);
+  assert.equal(removed.hasPin, false);
+  assert.equal(await prisma.profileSession.count({ where: { profileId: id } }), 0);
+  await expectResponse('GET', path, undefined, 200);
+
+  await expectResponse('PUT', path + '/pin', { pin: '0007', pinConfirmation: '0007' }, 200);
+  const last = await unlock(id);
+  await expectResponse('DELETE', path, { currentPin: '0007' }, 200, last.token);
+  assert.equal(await prisma.profileSession.count({ where: { profileId: id } }), 0);
+  await expectResponse('GET', path, undefined, 404, last.token);
+});
 
 test('addMonths mantém a data-base nos dias 29, 30 e 31, incluindo fevereiro e ano bissexto', () => {
   process.env.TZ = 'America/Fortaleza';
@@ -196,8 +340,7 @@ test('o resumo de perfis devolve o total do SQLite em centavos', async () => {
   const now = new Date();
   const date = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-15';
   await batch(id, [entry({ amount: 0.01, date }), entry({ amount: 0.05, date })]);
-  const profiles = await expectResponse('GET', '/profiles', undefined, 200);
-  const row = profiles.find(item => item.id === id);
+  const row = await expectResponse('GET', '/profiles/' + id, undefined, 200);
   assert.equal(row.pendingCountCurrentMonth, 2);
   assert.equal(row.pendingAmountCurrentMonth, 0.06);
 });
@@ -210,8 +353,7 @@ test('o resumo do perfil e o extrato mensal usam o mesmo mês civil para as data
   await create(id, { date: '2028-02-29', amount: 20 });
   await create(id, { date: '2028-03-31', amount: 30 });
   assert.deepEqual((await list(id, '&month=3&year=2028')).map(day), ['2028-03-31']);
-  const profiles = await expectResponse('GET', '/profiles', undefined, 200);
-  const row = profiles.find(item => item.id === id);
+  const row = await expectResponse('GET', '/profiles/' + id, undefined, 200);
   assert.equal(row.pendingCountCurrentMonth, 1);
   assert.equal(row.pendingAmountCurrentMonth, 30);
 });
