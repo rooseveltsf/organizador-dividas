@@ -3,69 +3,62 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from '../prisma';
 import {
   ApiResponse,
-  CreateTransactionDTO,
-  UpdateTransactionDTO,
-  BatchCreateTransactionDTO,
+  CreateTransactionInput,
   PaymentStatus,
   TransactionType,
   TransactionCategory,
+  addMonths,
+  calendarDateSchema,
+  calendarDay,
+  calendarMonthRange,
+  installmentCents,
+  parseCalendarDate,
+  toCents,
+  transactionCount,
   createTransactionSchema,
   updateTransactionSchema,
   updateStatusSchema,
   batchCreateTransactionSchema,
 } from '@organizador/shared';
 
-/**
- * 1. Helper de Correção de Fuso Horário (Timezone Bug):
- * Interpreta strings no formato YYYY-MM-DD extraindo [year, month, day]
- * e instanciando um objeto Date fixado no meio-dia local (12:00:00.000).
- * Isso impede que fusos a oeste de Greenwich (como GMT-3 / Horário de Brasília)
- * desloquem a data para o dia anterior (ex: 21:00 do dia 30/31) ao converter UTC,
- * garantindo integridade visual e consistência nos filtros de listagem.
- */
-export function parseLocalDate(dateStr: string): Date {
-  if (!dateStr || typeof dateStr !== 'string') {
-    throw new Error('Data não fornecida ou inválida.');
-  }
+export { addMonths, parseCalendarDate as parseLocalDate } from '@organizador/shared';
 
-  // Remove fração de hora ISO caso venha anexada (ex: 2026-10-01T00:00:00.000Z -> 2026-10-01)
-  const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr.trim();
-  const parts = cleanDate.split('-');
+function buildRecords(
+  profileId: string,
+  item: Omit<CreateTransactionInput, 'profileId' | 'repeatMonths'>,
+  repeatMonths: number,
+  groupSingleRecurrence: boolean,
+) {
+  const baseDate = parseCalendarDate(item.date);
+  const count = transactionCount(item, repeatMonths);
+  const installment = item.category === 'installment';
+  const groupedRecurrence = (item.category === 'fixed' || item.category === 'recurring') &&
+    (count > 1 || groupSingleRecurrence);
+  const groupId = installment || groupedRecurrence ? item.groupId || randomUUID() : item.groupId ?? null;
+  const first = item.currentInstallment ?? 1;
+  const total = item.totalInstallments ?? 1;
+  const purchaseCents = item.amountMode === 'total' ? toCents(item.amount) : null;
 
-  if (parts.length < 3) {
-    throw new Error(`Data inválida: "${dateStr}". Formato esperado: YYYY-MM-DD.`);
-  }
+  return Array.from({ length: count }, (_, index) => {
+    const date = addMonths(baseDate, index);
+    const number = first + index;
+    const status = index === 0 ? item.status : 'pending';
 
-  const year = parseInt(parts[0], 10);
-  const month = parseInt(parts[1], 10);
-  const day = parseInt(parts[2], 10);
-
-  if (isNaN(year) || isNaN(month) || isNaN(day)) {
-    throw new Error(`Data inválida: "${dateStr}". Formato esperado: YYYY-MM-DD.`);
-  }
-
-  return new Date(year, month - 1, day, 12, 0, 0, 0);
-}
-
-/**
- * Utilitário para adicionar meses a uma data sem sofrer com overflow de dias
- * (Ex: 31 de Janeiro + 1 mês -> 28/29 de Fevereiro, e não início de Março).
- * Mantém rigorosamente o horário em 12:00:00.
- */
-export function addMonths(date: Date, months: number): Date {
-  const result = new Date(date);
-  const originalDay = result.getDate();
-
-  result.setMonth(result.getMonth() + months);
-
-  // Se o dia mudou após incrementar o mês, volta para o último dia do mês desejado
-  if (result.getDate() !== originalDay) {
-    result.setDate(0);
-  }
-
-  // Garante blindagem de fuso horário fixando a hora em 12:00:00
-  result.setHours(12, 0, 0, 0);
-  return result;
+    return {
+      id: randomUUID(),
+      profileId,
+      type: item.type,
+      category: item.category,
+      amount: purchaseCents === null ? item.amount : installmentCents(purchaseCents, total, number) / 100,
+      description: item.description,
+      date,
+      currentInstallment: installment ? number : groupedRecurrence ? null : item.currentInstallment ?? null,
+      totalInstallments: installment ? total : groupedRecurrence ? null : item.totalInstallments ?? null,
+      groupId,
+      status,
+      paymentDate: status === 'paid' ? (item.paymentDate ? parseCalendarDate(item.paymentDate) : date) : null,
+    };
+  });
 }
 
 export class TransactionController {
@@ -105,70 +98,42 @@ export class TransactionController {
 
       let dateFilter: { gte?: Date; lte?: Date } | undefined;
 
-      // Filtro por mês e ano
-      if (month && year) {
-        const monthNum = parseInt(month as string, 10);
-        const yearNum = parseInt(year as string, 10);
-
-        if (isNaN(monthNum) || isNaN(yearNum) || monthNum < 1 || monthNum > 12) {
-          const badRequest: ApiResponse = {
+      if (month !== undefined || year !== undefined) {
+        if (typeof month !== 'string' || !/^(?:0?[1-9]|1[0-2])$/.test(month) ||
+            typeof year !== 'string' || !/^\d{4}$/.test(year)) {
+          res.status(400).json({
             success: false,
-            message: 'Parâmetros inválidos: month deve ser entre 1 e 12 e year um ano válido.',
-          };
-          res.status(400).json(badRequest);
+            message: 'Informe month de 1 a 12 e year com quatro dígitos.',
+          });
           return;
         }
 
-        // Início e fim do mês especificado cobrindo do início do 1º dia ao último milissegundo do mês
-        const startMonth = new Date(yearNum, monthNum - 1, 1, 0, 0, 0, 0);
-        const endMonth = new Date(yearNum, monthNum, 0, 23, 59, 59, 999);
-
-        dateFilter = {
-          gte: startMonth,
-          lte: endMonth,
-        };
+        dateFilter = calendarMonthRange(year + '-' + month.padStart(2, '0'));
       }
 
-      // Filtro por intervalo explícito de datas (startDate / endDate)
-      if (startDate || endDate) {
-        let gteDate: Date | undefined;
-        let lteDate: Date | undefined;
-
-        if (startDate) {
-          try {
-            const parsedStart = parseLocalDate(startDate as string);
-            parsedStart.setHours(0, 0, 0, 0);
-            gteDate = parsedStart;
-          } catch {
-            const badRequest: ApiResponse = {
-              success: false,
-              message: 'startDate inválido. Use o formato YYYY-MM-DD.',
-            };
-            res.status(400).json(badRequest);
-            return;
-          }
+      if (startDate !== undefined) {
+        const parsed = calendarDateSchema.safeParse(startDate);
+        if (!parsed.success) {
+          res.status(400).json({ success: false, message: 'startDate inválido. Use o formato YYYY-MM-DD.' });
+          return;
         }
-
-        if (endDate) {
-          try {
-            const parsedEnd = parseLocalDate(endDate as string);
-            parsedEnd.setHours(23, 59, 59, 999);
-            lteDate = parsedEnd;
-          } catch {
-            const badRequest: ApiResponse = {
-              success: false,
-              message: 'endDate inválido. Use o formato YYYY-MM-DD.',
-            };
-            res.status(400).json(badRequest);
-            return;
-          }
+        const start = parseCalendarDate(parsed.data);
+        start.setUTCHours(0, 0, 0, 0);
+        dateFilter = { ...dateFilter, gte: start };
+      }
+      if (endDate !== undefined) {
+        const parsed = calendarDateSchema.safeParse(endDate);
+        if (!parsed.success) {
+          res.status(400).json({ success: false, message: 'endDate inválido. Use o formato YYYY-MM-DD.' });
+          return;
         }
-
-        dateFilter = {
-          ...(dateFilter || {}),
-          ...(gteDate ? { gte: gteDate } : {}),
-          ...(lteDate ? { lte: lteDate } : {}),
-        };
+        const end = parseCalendarDate(parsed.data);
+        end.setUTCHours(23, 59, 59, 999);
+        dateFilter = { ...dateFilter, lte: end };
+      }
+      if (dateFilter?.gte && dateFilter.lte && dateFilter.gte > dateFilter.lte) {
+        res.status(400).json({ success: false, message: 'A data inicial deve ser anterior ou igual à data final.' });
+        return;
       }
 
       // Montagem da query isolada por profileId
@@ -248,145 +213,22 @@ export class TransactionController {
         return;
       }
 
-      // Conversão segura da data base com proteção de timezone
-      let baseDate: Date;
-      try {
-        baseDate = parseLocalDate(payload.date);
-      } catch (err) {
-        const badRequest: ApiResponse = {
-          success: false,
-          message: err instanceof Error ? err.message : 'Data fornecida é inválida. Utilize YYYY-MM-DD.',
-        };
-        res.status(400).json(badRequest);
-        return;
-      }
-
-      // REGRA 1: Categoria 'installment' (Compras parceladas)
-      if (payload.category === 'installment') {
-        const totalInstallments = Number(payload.totalInstallments) || 1;
-
-        if (totalInstallments < 1) {
-          const badRequest: ApiResponse = {
-            success: false,
-            message: 'Para categoria installment, totalInstallments deve ser maior ou igual a 1.',
-          };
-          res.status(400).json(badRequest);
-          return;
-        }
-
-        const groupId = payload.groupId || randomUUID();
-        const startInstallment = Number(payload.currentInstallment) || 1;
-        const installmentsToGenerate =
-          startInstallment > 1 && totalInstallments >= startInstallment
-            ? totalInstallments - startInstallment + 1
-            : totalInstallments;
-        const transactionsToCreate = [];
-
-        for (let i = 0; i < installmentsToGenerate; i++) {
-          const installmentNumber = startInstallment + i;
-          const installmentDate = addMonths(baseDate, i);
-          const isFirst = i === 0;
-
-          transactionsToCreate.push({
-            id: randomUUID(),
-            profileId: payload.profileId,
-            type: payload.type,
-            category: payload.category,
-            amount: payload.amount,
-            description: payload.description,
-            date: installmentDate,
-            currentInstallment: installmentNumber,
-            totalInstallments: totalInstallments,
-            groupId: groupId,
-            status: isFirst ? payload.status : 'pending',
-            paymentDate: isFirst && payload.status === 'paid'
-              ? (payload.paymentDate ? parseLocalDate(payload.paymentDate) : installmentDate)
-              : null,
-          });
-        }
-
-        await prisma.$transaction(
-          transactionsToCreate.map((data) => prisma.transaction.create({ data }))
-        );
-
-        const response: ApiResponse<{ groupId: string; count: number; items: typeof transactionsToCreate }> = {
+      const items = buildRecords(payload.profileId, payload, payload.repeatMonths, true);
+      if (payload.category !== 'daily') {
+        await prisma.$transaction(items.map(data => prisma.transaction.create({ data })));
+        const message = payload.category === 'installment'
+          ? `${items.length} parcelas geradas com sucesso para o perfil.`
+          : `${items.length} transações (${payload.category}) geradas com sucesso para o perfil.`;
+        const response: ApiResponse<{ groupId: string | null; count: number; items: typeof items }> = {
           success: true,
-          message: `${transactionsToCreate.length} parcelas geradas com sucesso para o perfil.`,
-          data: {
-            groupId,
-            count: transactionsToCreate.length,
-            items: transactionsToCreate,
-          },
+          message,
+          data: { groupId: items[0].groupId, count: items.length, items },
         };
         res.status(201).json(response);
         return;
       }
 
-      // REGRA 2: Categorias 'fixed' (Fixas) e 'recurring' (Recorrentes)
-      if (payload.category === 'fixed' || payload.category === 'recurring') {
-        const repeatCount = payload.repeatMonths ?? 12;
-        const groupId = payload.groupId || randomUUID();
-        const transactionsToCreate = [];
-
-        for (let i = 0; i < repeatCount; i++) {
-          const txDate = addMonths(baseDate, i);
-          const isFirst = i === 0;
-
-          transactionsToCreate.push({
-            id: randomUUID(),
-            profileId: payload.profileId,
-            type: payload.type,
-            category: payload.category,
-            amount: payload.amount,
-            description: payload.description,
-            date: txDate,
-            currentInstallment: null,
-            totalInstallments: null,
-            groupId: groupId,
-            status: isFirst ? payload.status : 'pending',
-            paymentDate: isFirst && payload.status === 'paid'
-              ? (payload.paymentDate ? parseLocalDate(payload.paymentDate) : txDate)
-              : null,
-          });
-        }
-
-        await prisma.$transaction(
-          transactionsToCreate.map((data) => prisma.transaction.create({ data }))
-        );
-
-        const response: ApiResponse<{ groupId: string; count: number; items: typeof transactionsToCreate }> = {
-          success: true,
-          message: `${transactionsToCreate.length} transações (${payload.category}) geradas com sucesso para os próximos ${repeatCount} meses.`,
-          data: {
-            groupId,
-            count: transactionsToCreate.length,
-            items: transactionsToCreate,
-          },
-        };
-        res.status(201).json(response);
-        return;
-      }
-
-      // REGRA 3: Demais categorias ('daily' / avulsas)
-      const isPaid = payload.status === 'paid';
-      const singleTransaction = await prisma.transaction.create({
-        data: {
-          profileId: payload.profileId,
-          type: payload.type,
-          category: payload.category,
-          amount: payload.amount,
-          description: payload.description,
-          date: baseDate,
-          currentInstallment: payload.currentInstallment ?? null,
-          totalInstallments: payload.totalInstallments ?? null,
-          groupId: payload.groupId ?? null,
-          status: payload.status,
-          paymentDate: isPaid
-            ? (payload.paymentDate ? parseLocalDate(payload.paymentDate) : baseDate)
-            : null,
-        },
-      });
-
+      const singleTransaction = await prisma.transaction.create({ data: items[0] });
       const response: ApiResponse<typeof singleTransaction> = {
         success: true,
         message: 'Transação criada com sucesso.',
@@ -437,116 +279,9 @@ export class TransactionController {
         return;
       }
 
-      if (payload.transactions.length === 0) {
-        const badRequest: ApiResponse = {
-          success: false,
-          message: 'Nenhuma transação foi informada para criação em lote.',
-        };
-        res.status(400).json(badRequest);
-        return;
-      }
-
-      const recordsToCreate = [];
-
-      for (const item of payload.transactions) {
-        let baseDate: Date;
-        try {
-          baseDate = parseLocalDate(item.date);
-        } catch (err) {
-          res.status(400).json({
-            success: false,
-            message: `Data inválida "${item.date}" para o item "${item.description}".`,
-          });
-          return;
-        }
-
-        // Projeção mensal para categorias fixed / recurring caso repeatMonths seja informado
-        if (item.category === 'fixed' || item.category === 'recurring') {
-          const repeatCount = payload.repeatMonths ?? item.repeatMonths ?? 1;
-
-          if (repeatCount > 1) {
-            const groupId = item.groupId || randomUUID();
-            for (let i = 0; i < repeatCount; i++) {
-              const txDate = addMonths(baseDate, i);
-              const isFirst = i === 0;
-
-              recordsToCreate.push({
-                id: randomUUID(),
-                profileId: payload.profileId,
-                type: item.type,
-                category: item.category,
-                amount: item.amount,
-                description: item.description,
-                date: txDate,
-                currentInstallment: null,
-                totalInstallments: null,
-                groupId: groupId,
-                status: isFirst ? item.status : 'pending',
-                paymentDate: isFirst && item.status === 'paid'
-                  ? (item.paymentDate ? parseLocalDate(item.paymentDate) : txDate)
-                  : null,
-              });
-            }
-            continue;
-          }
-        }
-
-        // Parcelamentos caso especificados
-        if (item.category === 'installment') {
-          const totalInstallments = Number(item.totalInstallments) || 1;
-          if (totalInstallments > 1) {
-            const groupId = item.groupId || randomUUID();
-            const startInstallment = Number(item.currentInstallment) || 1;
-            const installmentsToGenerate =
-              startInstallment > 1 && totalInstallments >= startInstallment
-                ? totalInstallments - startInstallment + 1
-                : totalInstallments;
-
-            for (let i = 0; i < installmentsToGenerate; i++) {
-              const installmentNumber = startInstallment + i;
-              const installmentDate = addMonths(baseDate, i);
-              const isFirst = i === 0;
-
-              recordsToCreate.push({
-                id: randomUUID(),
-                profileId: payload.profileId,
-                type: item.type,
-                category: item.category,
-                amount: item.amount,
-                description: item.description,
-                date: installmentDate,
-                currentInstallment: installmentNumber,
-                totalInstallments: totalInstallments,
-                groupId: groupId,
-                status: isFirst ? item.status : 'pending',
-                paymentDate: isFirst && item.status === 'paid'
-                  ? (item.paymentDate ? parseLocalDate(item.paymentDate) : installmentDate)
-                  : null,
-              });
-            }
-            continue;
-          }
-        }
-
-        // Item avulso padrão
-        const isPaid = item.status === 'paid';
-        recordsToCreate.push({
-          id: randomUUID(),
-          profileId: payload.profileId,
-          type: item.type,
-          category: item.category,
-          amount: item.amount,
-          description: item.description,
-          date: baseDate,
-          currentInstallment: item.currentInstallment ?? null,
-          totalInstallments: item.totalInstallments ?? null,
-          groupId: item.groupId ?? null,
-          status: item.status,
-          paymentDate: isPaid
-            ? (item.paymentDate ? parseLocalDate(item.paymentDate) : baseDate)
-            : null,
-        });
-      }
+      const recordsToCreate = payload.transactions.flatMap(item =>
+        buildRecords(payload.profileId, item, payload.repeatMonths ?? item.repeatMonths ?? 1, false)
+      );
 
       // Execução atômica no banco de dados
       await prisma.$transaction(
@@ -621,6 +356,22 @@ export class TransactionController {
         }
       }
 
+      const category = payload.category ?? existing.category;
+      if (category === 'installment' && (
+        payload.currentInstallment !== undefined || payload.totalInstallments !== undefined ||
+        category !== existing.category
+      )) {
+        const current = payload.currentInstallment === undefined ? existing.currentInstallment : payload.currentInstallment;
+        const total = payload.totalInstallments === undefined ? existing.totalInstallments : payload.totalInstallments;
+        if (transactionCount({ category, currentInstallment: current, totalInstallments: total }, 1) < 1) {
+          res.status(400).json({
+            success: false,
+            message: 'A parcela atual deve estar entre 1 e o total de parcelas.',
+          });
+          return;
+        }
+      }
+
       const updateData: {
         profileId?: string;
         description?: string;
@@ -644,34 +395,17 @@ export class TransactionController {
       if (payload.totalInstallments !== undefined) updateData.totalInstallments = payload.totalInstallments;
       if (payload.groupId !== undefined) updateData.groupId = payload.groupId;
 
-      if (payload.date !== undefined) {
-        try {
-          updateData.date = parseLocalDate(payload.date);
-        } catch (err) {
-          res.status(400).json({
-            success: false,
-            message: err instanceof Error ? err.message : 'Data inválida.',
-          });
-          return;
-        }
-      }
+      if (payload.date !== undefined) updateData.date = parseCalendarDate(payload.date);
 
       if (payload.status !== undefined) {
         updateData.status = payload.status;
-        if (payload.status === 'paid') {
-          if (payload.paymentDate) {
-            updateData.paymentDate = parseLocalDate(payload.paymentDate);
-          } else if (existing.paymentDate) {
-            updateData.paymentDate = existing.paymentDate;
-          } else {
-            const now = new Date();
-            updateData.paymentDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
-          }
-        } else {
-          updateData.paymentDate = null;
-        }
+        updateData.paymentDate = payload.status === 'paid'
+          ? (payload.paymentDate
+            ? parseCalendarDate(payload.paymentDate)
+            : existing.paymentDate ?? parseCalendarDate(calendarDay(new Date())))
+          : null;
       } else if (payload.paymentDate !== undefined) {
-        updateData.paymentDate = payload.paymentDate ? parseLocalDate(payload.paymentDate) : null;
+        updateData.paymentDate = payload.paymentDate ? parseCalendarDate(payload.paymentDate) : null;
       }
 
       const updatedTransaction = await prisma.transaction.update({
@@ -734,19 +468,11 @@ export class TransactionController {
       // Se status explícito não foi enviado, alterna entre 'pending' e 'paid'
       const newStatus: PaymentStatus = requestedStatus ?? (existing.status === 'paid' ? 'pending' : 'paid');
 
-      let newPaymentDate: Date | null = null;
-      if (newStatus === 'paid') {
-        if (requestedPaymentDate) {
-          newPaymentDate = parseLocalDate(requestedPaymentDate);
-        } else {
-          // Preenchimento automático com o meio-dia da data atual
-          const now = new Date();
-          newPaymentDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
-        }
-      } else {
-        // Se 'pending' ou 'overdue', remove paymentDate
-        newPaymentDate = null;
-      }
+      const newPaymentDate = newStatus === 'paid'
+        ? (requestedPaymentDate
+          ? parseCalendarDate(requestedPaymentDate)
+          : (existing.status === 'paid' ? existing.paymentDate : null) ?? parseCalendarDate(calendarDay(new Date())))
+        : null;
 
       const updatedTransaction = await prisma.transaction.update({
         where: { id },
@@ -796,18 +522,16 @@ export class TransactionController {
 
       // Se deleteAll for true e possuir um groupId, apaga todas as parcelas/recorrências futuras
       if (deleteAll && targetTransaction.groupId) {
-        const deleteCondition = targetTransaction.currentInstallment !== null
-          ? {
-              groupId: targetTransaction.groupId,
-              currentInstallment: { gte: targetTransaction.currentInstallment },
-            }
-          : {
-              groupId: targetTransaction.groupId,
-              date: { gte: targetTransaction.date },
-            };
-
+        const from = new Date(targetTransaction.date);
+        from.setUTCHours(0, 0, 0, 0);
         const deleteResult = await prisma.transaction.deleteMany({
-          where: deleteCondition,
+          where: {
+            profileId: targetTransaction.profileId,
+            groupId: targetTransaction.groupId,
+            ...(targetTransaction.currentInstallment !== null
+              ? { currentInstallment: { gte: targetTransaction.currentInstallment } }
+              : { date: { gte: from } }),
+          },
         });
 
         const response: ApiResponse<{ deletedCount: number; groupId: string }> = {

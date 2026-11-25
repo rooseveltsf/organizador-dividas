@@ -1,26 +1,32 @@
-import React, { createContext, useContext, useState, useEffect, useLayoutEffect, useRef, useCallback, type ReactNode } from 'react';
-import type {
-  Transaction,
-  CreateTransactionDTO,
-  UpdateTransactionInput,
-  PaymentStatus,
-  ApiResponse,
-} from '@organizador/shared';
+import { createContext, useContext, useState, useLayoutEffect, useMemo, useRef, useCallback, type ReactNode } from 'react';
+import type { Transaction, CreateTransactionDTO, UpdateTransactionInput, PaymentStatus } from '@organizador/shared';
+import { requestApi } from '../api';
 import { useProfiles } from './ProfileContext';
 
-const API_BASE_URL = 'http://localhost:3000';
+type RowOperation = 'save' | 'status' | 'delete';
+type MonthScope = { profileId: string; month: number; year: number };
+type MonthData = {
+  scope: MonthScope;
+  rows: Transaction[] | null;
+  loading: boolean;
+  error: string | null;
+};
+
+const loadErrorMessage = 'Não foi possível carregar os lançamentos deste mês.';
 
 export interface TransactionContextData {
   transactions: Transaction[];
   hasMonthData: boolean;
   loadError: string | null;
   isLoading: boolean;
+  pendingRows: ReadonlyMap<string, RowOperation>;
   selectedMonth: number;
   selectedYear: number;
   setSelectedMonth: (month: number) => void;
   setSelectedYear: (year: number) => void;
   setSelectedDate: (month: number, year: number) => void;
   fetchTransactions: (month?: number, year?: number) => Promise<void>;
+  refreshTransactions: (profileId: string) => Promise<void>;
   addTransaction: (data: CreateTransactionDTO) => Promise<void>;
   updateTransaction: (id: string, data: UpdateTransactionInput) => Promise<void>;
   toggleTransactionStatus: (id: string, newStatus?: PaymentStatus) => Promise<void>;
@@ -29,211 +35,179 @@ export interface TransactionContextData {
 
 export const TransactionContext = createContext<TransactionContextData | undefined>(undefined);
 
-interface TransactionProviderProps {
-  children: ReactNode;
+function currentMonth(profileId: string | undefined) {
+  const today = new Date();
+  return { profileId, month: today.getMonth() + 1, year: today.getFullYear() };
 }
 
-export const TransactionProvider: React.FC<TransactionProviderProps> = ({ children }) => {
-  const { activeProfile } = useProfiles();
-  const currentDate = new Date();
-  const [selectedMonth, setSelectedMonth] = useState<number>(currentDate.getMonth() + 1);
-  const [selectedYear, setSelectedYear] = useState<number>(currentDate.getFullYear());
-  const periodKey = [activeProfile?.id, selectedYear, selectedMonth].join('/');
-  const currentPeriod = useRef(periodKey);
-  const lastRequest = useRef(0);
-  const [result, setResult] = useState<{ key: string; rows: Transaction[]; error: string | null }>();
-  const hasMonthData = result?.key === periodKey && !result.error;
-  const loadError = result?.key === periodKey ? result.error : null;
-  const transactions = hasMonthData ? result.rows : [];
+export function TransactionProvider({ children }: { children: ReactNode }) {
+  const profileId = useProfiles().activeProfile?.id;
+  const [selection, setSelection] = useState(() => currentMonth(profileId));
+  if (selection.profileId !== profileId) setSelection(currentMonth(profileId));
 
-  const [isLoading, setIsLoading] = useState(false);
+  const { month: selectedMonth, year: selectedYear } = selection;
+  const scope = useMemo(
+    () => profileId ? { profileId, month: selectedMonth, year: selectedYear } : null,
+    [profileId, selectedMonth, selectedYear],
+  );
+  const activeScope = useRef<MonthScope | null>(null);
+  const latestLoad = useRef<{ controller: AbortController; done: Promise<void> } | null>(null);
+  const [monthData, setMonthData] = useState<MonthData | null>(null);
+  const visibleData = monthData?.scope === scope ? monthData : null;
 
-  useLayoutEffect(() => {
-    currentPeriod.current = periodKey;
-  }, [periodKey]);
+  const rowOperations = useRef(new Map<string, RowOperation>());
+  const [pendingRows, setPendingRows] = useState<ReadonlyMap<string, RowOperation>>(new Map());
 
   const setSelectedDate = useCallback((month: number, year: number) => {
-    setSelectedMonth(month);
-    setSelectedYear(year);
+    setSelection((previous) => ({ ...previous, month, year }));
+  }, []);
+  const setSelectedMonth = useCallback((month: number) => {
+    setSelection((previous) => ({ ...previous, month }));
+  }, []);
+  const setSelectedYear = useCallback((year: number) => {
+    setSelection((previous) => ({ ...previous, year }));
   }, []);
 
-  const fetchTransactions = useCallback(
-    async (month?: number, year?: number) => {
-      if (!activeProfile) return;
+  const loadMonth = useCallback(async (target: MonthScope) => {
+    latestLoad.current?.controller.abort();
+    const controller = new AbortController();
+    setMonthData((previous) => ({
+      scope: target,
+      rows: previous?.scope === target ? previous.rows : null,
+      error: previous?.scope === target ? previous.error : null,
+      loading: true,
+    }));
 
-      const targetMonth = month ?? selectedMonth;
-      const targetYear = year ?? selectedYear;
-      const key = [activeProfile.id, targetYear, targetMonth].join('/');
-      if (currentPeriod.current !== key) return;
-      const request = ++lastRequest.current;
-      const isCurrent = () => currentPeriod.current === key && lastRequest.current === request;
-
-      setIsLoading(true);
+    const isCurrent = () => activeScope.current === target && latestLoad.current?.controller === controller;
+    const query = new URLSearchParams({
+      profileId: target.profileId,
+      month: String(target.month),
+      year: String(target.year),
+    });
+    let done = (async () => {
       try {
-        const queryParams = new URLSearchParams({
-          profileId: activeProfile.id,
-          month: String(targetMonth),
-          year: String(targetYear),
+        const rows = await requestApi<Transaction[]>('/transactions?' + query, loadErrorMessage, {
+          signal: controller.signal,
         });
-
-        const response = await fetch(`${API_BASE_URL}/transactions?${queryParams.toString()}`);
-        if (!response.ok) {
-          throw new Error(`Falha ao buscar transações: status ${response.status}`);
+        if (!Array.isArray(rows)) throw new Error(loadErrorMessage);
+        if (isCurrent()) setMonthData({ scope: target, rows, error: null, loading: false });
+      } catch {
+        if (isCurrent()) {
+          setMonthData((previous) => ({
+            scope: target,
+            rows: previous?.scope === target ? previous.rows : null,
+            error: loadErrorMessage,
+            loading: false,
+          }));
         }
-
-        const result: ApiResponse<Transaction[]> = await response.json();
-        if (!result.success || !Array.isArray(result.data)) throw new Error('Resposta de lançamentos inválida.');
-        if (isCurrent()) setResult({ key, rows: result.data, error: null });
-      } catch (error) {
-        console.error('Erro ao buscar transações na API:', error);
-        if (isCurrent()) setResult({ key, rows: [], error: 'Não foi possível carregar os lançamentos deste mês.' });
       } finally {
-        if (isCurrent()) setIsLoading(false);
+        if (isCurrent()) latestLoad.current = null;
       }
-    },
-    [activeProfile, selectedMonth, selectedYear]
-  );
+    })();
 
-  const addTransaction = useCallback(
-    async (data: CreateTransactionDTO) => {
-      const targetProfileId = data.profileId || activeProfile?.id;
-      if (!targetProfileId) {
-        throw new Error('Nenhum perfil ativo selecionado para registrar a transação.');
-      }
-
-      const payload: CreateTransactionDTO = {
-        ...data,
-        profileId: targetProfileId,
-      };
-
-      setIsLoading(true);
-      try {
-        const response = await fetch(`${API_BASE_URL}/transactions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (!response.ok) {
-          const errorData: ApiResponse = await response.json().catch(() => ({ success: false }));
-          throw new Error(errorData.message || `Erro ao criar transação: ${response.statusText}`);
-        }
-
-        // Após o sucesso, recarrega automaticamente as transações do perfil ativo
-        await fetchTransactions(selectedMonth, selectedYear);
-      } catch (error) {
-        console.error('Erro ao adicionar transação:', error);
-        throw error;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [activeProfile, fetchTransactions, selectedMonth, selectedYear]
-  );
-
-  const updateTransaction = useCallback(
-    async (id: string, data: UpdateTransactionInput) => {
-      setIsLoading(true);
-      try {
-        const response = await fetch(`${API_BASE_URL}/transactions/${id}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(data),
-        });
-
-        if (!response.ok) {
-          const errorData: ApiResponse = await response.json().catch(() => ({ success: false }));
-          throw new Error(errorData.message || `Erro ao atualizar transação: ${response.statusText}`);
-        }
-
-        await fetchTransactions(selectedMonth, selectedYear);
-      } catch (error) {
-        console.error('Erro ao atualizar transação:', error);
-        throw error;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [fetchTransactions, selectedMonth, selectedYear]
-  );
-
-  const toggleTransactionStatus = useCallback(
-    async (id: string, newStatus?: PaymentStatus) => {
-      setIsLoading(true);
-      try {
-        const response = await fetch(`${API_BASE_URL}/transactions/${id}/status`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(newStatus ? { status: newStatus } : {}),
-        });
-
-        if (!response.ok) {
-          const errorData: ApiResponse = await response.json().catch(() => ({ success: false }));
-          throw new Error(errorData.message || `Erro ao atualizar status: ${response.statusText}`);
-        }
-
-        await fetchTransactions(selectedMonth, selectedYear);
-      } catch (error) {
-        console.error('Erro ao atualizar status da transação:', error);
-        throw error;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [fetchTransactions, selectedMonth, selectedYear]
-  );
-
-  const deleteTransaction = useCallback(
-    async (id: string, deleteAllGroup: boolean = false) => {
-      setIsLoading(true);
-      try {
-        const queryParams = deleteAllGroup ? '?deleteAll=true' : '';
-        const response = await fetch(`${API_BASE_URL}/transactions/${id}${queryParams}`, {
-          method: 'DELETE',
-        });
-
-        if (!response.ok) {
-          const errorData: ApiResponse = await response.json().catch(() => ({ success: false }));
-          throw new Error(errorData.message || `Erro ao deletar transação: ${response.statusText}`);
-        }
-
-        await fetchTransactions(selectedMonth, selectedYear);
-      } catch (error) {
-        console.error('Erro ao deletar transação:', error);
-        throw error;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [fetchTransactions, selectedMonth, selectedYear]
-  );
-
-  // Recarrega as transações sempre que o perfil ativo, mês ou ano mudar
-  useEffect(() => {
-    if (activeProfile) {
-      fetchTransactions(selectedMonth, selectedYear);
+    latestLoad.current = { controller, done };
+    await done;
+    // Se outra gravação iniciou uma consulta mais recente, aguarde essa atualização
+    // antes de liberar as ações do lançamento.
+    while (activeScope.current === target && latestLoad.current && latestLoad.current.done !== done) {
+      done = latestLoad.current.done;
+      await done;
     }
-  }, [activeProfile?.id, selectedMonth, selectedYear, fetchTransactions]);
+  }, []);
+
+  useLayoutEffect(() => {
+    activeScope.current = scope;
+    if (scope) void loadMonth(scope);
+    else setMonthData(null);
+    return () => {
+      activeScope.current = null;
+      latestLoad.current?.controller.abort();
+      latestLoad.current = null;
+    };
+  }, [scope, loadMonth]);
+
+  const fetchTransactions = useCallback(async (month?: number, year?: number) => {
+    const target = activeScope.current;
+    if (target && (month ?? target.month) === target.month && (year ?? target.year) === target.year) {
+      await loadMonth(target);
+    }
+  }, [loadMonth]);
+
+  const refreshTransactions = useCallback(async (affectedProfileId: string) => {
+    const target = activeScope.current;
+    if (target?.profileId === affectedProfileId) await loadMonth(target);
+  }, [loadMonth]);
+
+  async function mutateRow(id: string, operation: RowOperation, send: () => Promise<unknown>, destinationProfileId?: string) {
+    if (rowOperations.current.has(id)) throw new Error('Há uma alteração em andamento neste lançamento.');
+    rowOperations.current.set(id, operation);
+    setPendingRows(new Map(rowOperations.current));
+    try {
+      await send();
+      const visibleProfileId = activeScope.current?.profileId;
+      if (visibleProfileId && (visibleProfileId === profileId || visibleProfileId === destinationProfileId)) {
+        await refreshTransactions(visibleProfileId);
+      }
+    } finally {
+      rowOperations.current.delete(id);
+      setPendingRows(new Map(rowOperations.current));
+    }
+  }
+
+  async function addTransaction(data: CreateTransactionDTO) {
+    const targetProfileId = data.profileId || profileId;
+    if (!targetProfileId) throw new Error('Selecione um perfil para salvar este lançamento.');
+    await requestApi('/transactions', 'Não foi possível salvar o lançamento. Tente novamente.', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...data, profileId: targetProfileId }),
+    });
+    await refreshTransactions(targetProfileId);
+  }
+
+  function updateTransaction(id: string, data: UpdateTransactionInput) {
+    return mutateRow(id, 'save', () => requestApi(
+      '/transactions/' + encodeURIComponent(id), 'Não foi possível salvar as alterações. Tente novamente.', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      },
+    ), data.profileId);
+  }
+
+  function toggleTransactionStatus(id: string, newStatus?: PaymentStatus) {
+    return mutateRow(id, 'status', () => requestApi(
+      '/transactions/' + encodeURIComponent(id) + '/status', 'Não foi possível alterar a situação do lançamento. Tente novamente.', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newStatus ? { status: newStatus } : {}),
+      },
+    ));
+  }
+
+  function deleteTransaction(id: string, deleteAllGroup = false) {
+    const query = deleteAllGroup ? '?deleteAll=true' : '';
+    return mutateRow(id, 'delete', () => requestApi(
+      '/transactions/' + encodeURIComponent(id) + query, 'Não foi possível excluir o lançamento. Tente novamente.',
+      { method: 'DELETE' },
+    ));
+  }
 
   return (
     <TransactionContext.Provider
       value={{
-        transactions,
-        hasMonthData,
-        loadError,
-        isLoading,
+        transactions: visibleData?.rows ?? [],
+        hasMonthData: visibleData?.rows != null,
+        loadError: visibleData?.error ?? null,
+        isLoading: Boolean(scope && (visibleData?.loading ?? true)),
+        pendingRows,
         selectedMonth,
         selectedYear,
         setSelectedMonth,
         setSelectedYear,
         setSelectedDate,
         fetchTransactions,
+        refreshTransactions,
         addTransaction,
         updateTransaction,
         toggleTransactionStatus,
@@ -243,7 +217,7 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
       {children}
     </TransactionContext.Provider>
   );
-};
+}
 
 export function useTransactions(): TransactionContextData {
   const context = useContext(TransactionContext);

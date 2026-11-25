@@ -144,6 +144,13 @@ button:disabled, button[aria-disabled="true"] { cursor: not-allowed; opacity: .6
 .dashboard .wordmark { flex: none; }
 .dashboard .active-profile { min-width: 0; max-width: 38ch; }
 .dashboard dialog { overflow-wrap: anywhere; }
+.notebook-views { display: flex; flex-wrap: wrap; gap: .25rem 1.3rem; border-bottom: 1px solid var(--colors-slate-200); }
+.notebook-views button {
+  display: inline-flex; align-items: center; gap: .45rem; min-height: 44px; padding: .4rem .1rem;
+  border-bottom: 2px solid transparent; color: var(--colors-slate-600); font-size: .9rem; font-weight: 600; cursor: pointer;
+}
+.notebook-views button:hover { color: var(--colors-brand-700); }
+.notebook-views button[aria-current] { color: var(--colors-brand-700); border-bottom-color: var(--colors-brand-600); cursor: default; }
 .month-header, .month-nav, .month-actions, .ledger-heading, .ledger-filters {
   display: flex; align-items: center; flex-wrap: wrap;
 }
@@ -222,6 +229,7 @@ button:disabled, button[aria-disabled="true"] { cursor: not-allowed; opacity: .6
 .ledger-table .actions-heading { width: 112px; text-align: right; }
 .ledger-row { border-bottom: 1px solid var(--colors-slate-200); }
 .ledger-row:hover { background: var(--colors-paper); }
+.ledger-row:focus { outline: 2px solid var(--colors-brand-600); outline-offset: -2px; background: var(--colors-brand-50); }
 .ledger-row td, .ledger-row th { padding: .45rem .75rem; vertical-align: middle; }
 .tx-description { text-align: left; font-weight: 400; overflow-wrap: anywhere; }
 .tx-description strong { font-size: 1rem; font-weight: 600; }
@@ -325,4 +333,68 @@ dialog.notebook-dialog::backdrop { background: transparent; }
 @media (max-width: 440px) {
   .transaction-pair { grid-template-columns: minmax(0, 1fr); }
   .transaction-form input:not([type="radio"]), .transaction-form select { font-size: 1rem; min-height: 44px; }
+}
+
+.commitments-profile { width: min(14rem, 70vw); min-width: 0; }
+.commitments-heading { margin-block: clamp(1.5rem, 4vw, 2.9rem) clamp(1.35rem, 3.3vw, 2.4rem); }
+.commitments-heading h1 {
+  color: var(--colors-brand-700); font: 400 clamp(2.35rem, 6vw, 4.85rem)/1 var(--fonts-heading);
+  letter-spacing: -.055em; overflow-wrap: anywhere;
+}
+.commitments-heading p { color: var(--colors-slate-600); margin-top: .7rem; max-width: 60ch; }
+.commitments-period { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .65rem; margin-bottom: .8rem; }
+.commitments-period h2, .commitments-ledger h3 { font: 400 clamp(1.65rem, 3.4vw, 2.55rem)/1.12 var(--fonts-heading); letter-spacing: -.035em; }
+.commitments-period .month-arrows button { min-width: 44px; height: 44px; }
+.commitments-summary {
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  border: 1px solid var(--colors-slate-200); border-radius: 6px; background: var(--colors-paper);
+}
+.commitments-total, .commitments-categories { min-width: 0; padding: clamp(1rem, 3vw, 1.85rem); }
+.commitments-total {
+  background: var(--colors-brand-600); color: var(--colors-paper);
+  border-radius: 5px 0 0 5px; border-left: 4px solid var(--profile-primary);
+}
+.commitments-summary h3 { font-weight: 600; }
+.commitments-total-value { margin: .5rem 0 .85rem; font-size: clamp(1.8rem, 4.5vw, 3.35rem); line-height: 1.1; letter-spacing: -.045em; font-weight: 550; overflow-wrap: anywhere; }
+.commitments-summary dl div { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .1rem .75rem; padding-block: .5rem; }
+.commitments-summary dl { font-size: .9rem; }
+.commitments-summary dd { margin-left: auto; font-weight: 600; overflow-wrap: anywhere; }
+.commitments-total dl { border-top: 1px solid #69877a; }
+.commitments-categories dl { margin-top: .45rem; }
+.commitments-categories dl div + div { border-top: 1px solid var(--colors-slate-200); }
+.commitment-category { display: inline-block; padding: .1rem .48rem; border-radius: 3px; font-size: .875rem; font-weight: 600; }
+.commitment-category.fixed { background: var(--colors-brand-50); color: var(--colors-brand-700); }
+.commitment-category.recurring { background: var(--colors-warning-50); color: var(--colors-warning-700); }
+.commitment-category.installment { background: var(--colors-expense-50); color: var(--colors-expense-700); }
+.commitments-ledger { margin-top: clamp(1.6rem, 3vw, 2.45rem); }
+.commitments-list { list-style: none; margin-top: .75rem; border-top: 1px solid var(--colors-slate-300); }
+.commitment-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(7rem, .3fr) minmax(7rem, .34fr) auto;
+  align-items: center; gap: .6rem clamp(.65rem, 2.5vw, 1.65rem);
+  padding: .9rem .6rem; border-bottom: 1px solid var(--colors-slate-200);
+}
+.commitment-row:hover { background: var(--colors-paper); }
+.commitment-description, .commitment-amount { min-width: 0; overflow-wrap: anywhere; }
+.commitment-description h4 { font-size: 1.05rem; font-weight: 650; }
+.commitment-tags { display: flex; align-items: center; flex-wrap: wrap; gap: .3rem .6rem; margin-block: .25rem; }
+.commitment-tags, .commitment-remainder, .commitment-date, .commitment-amount span { font-size: .875rem; color: var(--colors-slate-600); }
+.commitment-remainder span { font-weight: 600; }
+.commitment-date span, .commitment-amount span { display: block; }
+.commitment-date time { color: var(--colors-slate-800); }
+.commitment-amount { text-align: right; }
+.commitment-amount strong { font-size: 1.05rem; font-weight: 650; }
+.commitment-amount .paid { color: var(--colors-income-700); }
+.commitment-amount .overdue { color: var(--colors-expense-700); }
+.commitment-open { min-height: 44px; }
+.commitments-empty {
+  display: grid; justify-items: center; gap: .6rem; padding: 2.2rem 1rem; text-align: center;
+  background: var(--colors-paper); border: 1px solid var(--colors-slate-200); border-radius: 5px; color: var(--colors-slate-600);
+}
+.commitments-empty button { min-height: 44px; margin-top: .25rem; }
+@media (max-width: 650px) {
+  .commitments-summary { grid-template-columns: minmax(0, 1fr); }
+  .commitments-total { border-radius: 5px 5px 0 0; }
+  .commitment-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding-inline: 0; }
+  .commitment-description { grid-column: 1 / -1; }
+  .commitment-open { grid-column: 1 / -1; justify-self: start; }
 }

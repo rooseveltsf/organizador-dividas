@@ -1,8 +1,17 @@
 import type { Transaction } from '@organizador/shared';
+import { toCents } from '@organizador/shared';
 import { ArrowDownLeft, ArrowUpRight, ChevronDown } from 'lucide-react';
 
 const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 export const formatCurrency = (value: number) => brl.format(value);
+
+export function formatCurrencyCents(cents: bigint) {
+  const units = cents / 100n;
+  const fraction = ((cents < 0n ? -cents : cents) % 100n).toString().padStart(2, '0');
+  return brl.formatToParts(cents < 0n && units === 0n ? -0 : units)
+    .map(part => part.type === 'fraction' ? fraction : part.value)
+    .join('');
+}
 
 function balanceLabel(value: number) {
   return value > 0 ? 'Superávit' : value < 0 ? 'Déficit' : 'Equilíbrio';
@@ -17,7 +26,7 @@ export function MonthlySummary({ transactions, unavailableReason }: { transactio
   ];
 
   for (const tx of transactions) {
-    const amount = tx.amount || 0;
+    const amount = toCents(tx.amount || 0);
     const paid = tx.status === 'paid' ? amount : 0;
     const flow = tx.type === 'income' ? income : expense;
     flow.total += amount;
@@ -29,14 +38,14 @@ export function MonthlySummary({ transactions, unavailableReason }: { transactio
     }
   }
 
-  const money = (value: number) => unavailableReason ? '—' : formatCurrency(value);
+  const money = (cents: number) => unavailableReason ? '—' : formatCurrency(cents / 100);
   const projected = income.total - expense.total;
   const realized = income.paid - expense.paid;
   const pendingIncome = income.total - income.paid;
   const pendingExpense = expense.total - expense.paid;
 
   return (
-    <section className="monthly-statement" data-wide={Math.max(income.total, expense.total) >= 10_000_000 || undefined} aria-label="Resumo financeiro do mês">
+    <section className="monthly-statement" data-wide={Math.max(income.total, expense.total) >= 1_000_000_000 || undefined} aria-label="Resumo financeiro do mês">
       <div className="statement-main">
         <div className="monthly-result">
           <h2>Resultado previsto do mês</h2>

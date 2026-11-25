@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../prisma';
-import { ApiResponse, Profile, CreateProfileDTO, UpdateProfileDTO } from '@organizador/shared';
+import { ApiResponse, Profile, CreateProfileDTO, UpdateProfileDTO, calendarDay, calendarMonthRange } from '@organizador/shared';
 
 const HEX_COLOR_REGEX = /^#([0-9A-F]{3}){1,2}$/i;
 
@@ -57,18 +57,13 @@ export class ProfileController {
       });
 
       // Intervalo do mês vigente para computar resumo de pendências
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      const currentMonth = calendarDay(new Date()).slice(0, 7);
 
       const pendingAggregations = await prisma.transaction.groupBy({
         by: ['profileId'],
         where: {
           status: 'pending',
-          date: {
-            gte: startOfMonth,
-            lte: endOfMonth,
-          },
+          date: calendarMonthRange(currentMonth),
         },
         _count: { id: true },
         _sum: { amount: true },

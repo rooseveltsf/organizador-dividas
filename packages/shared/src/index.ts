@@ -4,6 +4,13 @@
  */
 
 import { z } from 'zod';
+import { addMonths, parseCalendarDate } from './calendar';
+import { toCents, validMoneyCents } from './money';
+
+export { addMonths, calendarDay, calendarMonthRange, parseCalendarDate } from './calendar';
+export { installmentCents, toCents, validMoneyCents } from './money';
+
+export const MAX_SERIES_LENGTH = 120;
 
 // ============================================================================
 // Tipos Fundamentais de Transação
@@ -82,13 +89,13 @@ export interface Transaction {
   date: string;
 
   /** Número da parcela atual (obrigatório ou recomendado para categoria 'installment') */
-  currentInstallment?: number;
+  currentInstallment?: number | null;
 
   /** Quantidade total de parcelas (obrigatório ou recomendado para categoria 'installment') */
-  totalInstallments?: number;
+  totalInstallments?: number | null;
 
   /** Identificador do agrupamento (vincula todas as parcelas da mesma dívida/compra) */
-  groupId?: string;
+  groupId?: string | null;
 
   /** Estado do pagamento */
   status?: PaymentStatus;
@@ -111,11 +118,13 @@ export interface CreateTransactionDTO {
   type: TransactionType;
   category: TransactionCategory;
   amount: number;
+  /** Em parcelas, 'total' indica o valor de toda a compra. O padrão é o valor unitário. */
+  amountMode?: 'unit' | 'total';
   description: string;
   date: string;
-  currentInstallment?: number;
-  totalInstallments?: number;
-  groupId?: string;
+  currentInstallment?: number | null;
+  totalInstallments?: number | null;
+  groupId?: string | null;
   status?: PaymentStatus;
   paymentDate?: string | null;
   /** Quantidade de meses a projetar caso category seja 'fixed' ou 'recurring' (padrão: 12) */
@@ -134,7 +143,7 @@ export interface CreateInstallmentGroupDTO {
 }
 
 /** Payload para atualização de transação */
-export type UpdateTransactionDTO = Partial<CreateTransactionDTO>;
+export type UpdateTransactionDTO = Partial<Omit<CreateTransactionDTO, 'repeatMonths' | 'amountMode'>>;
 
 /** Filtros para listagem e busca */
 export interface TransactionFilters {
@@ -206,7 +215,21 @@ export const createProfileSchema = z.object({
 
 export const updateProfileSchema = createProfileSchema.partial();
 
-export const createTransactionSchema = z.object({
+export const calendarDateSchema = z.string().trim().pipe(
+  z.union([z.iso.date(), z.iso.datetime({ offset: true, local: true })],
+    { error: 'Informe uma data válida no formato YYYY-MM-DD ou ISO 8601.' })
+);
+
+const paymentDateSchema = calendarDateSchema.nullable().optional();
+const numberInput = z.union([z.number(), z.string().trim().min(1).transform(Number)]);
+const amountSchema = numberInput
+  .transform(toCents)
+  .refine(validMoneyCents, 'Informe um valor positivo em reais representável em centavos.')
+  .transform(cents => cents / 100);
+const seriesLength = numberInput.pipe(z.number().int().min(1).max(MAX_SERIES_LENGTH));
+const installmentNumber = seriesLength.optional().nullable();
+
+const createTransactionFields = z.object({
   profileId: z.string().min(1, 'O profileId é obrigatório'),
   type: z.enum(['income', 'expense'], {
     message: "O tipo deve ser 'income' ou 'expense'",
@@ -214,41 +237,77 @@ export const createTransactionSchema = z.object({
   category: z.enum(['fixed', 'recurring', 'installment', 'daily'], {
     message: "A categoria deve ser 'fixed', 'recurring', 'installment' ou 'daily'",
   }),
-  amount: z.coerce
-    .number({ message: 'O valor deve ser um número válido' })
-    .positive('O valor deve ser positivo')
-    .transform((val) => Math.round(val * 100) / 100),
+  amount: amountSchema,
+  amountMode: z.enum(['unit', 'total']).optional(),
   description: z.string().trim().min(1, 'A descrição é obrigatória'),
-  date: z.string().min(1, 'A data é obrigatória'),
-  currentInstallment: z.coerce.number().int().positive().optional().nullable(),
-  totalInstallments: z.coerce.number().int().positive().optional().nullable(),
+  date: calendarDateSchema,
+  currentInstallment: installmentNumber,
+  totalInstallments: installmentNumber,
   groupId: z.string().optional().nullable(),
   status: z.enum(['pending', 'paid', 'overdue']).optional().default('pending'),
-  paymentDate: z.string().nullable().optional(),
-  repeatMonths: z.coerce.number().int().min(1, 'repeatMonths deve ser no mínimo 1').optional().default(12),
+  paymentDate: paymentDateSchema,
+  repeatMonths: seriesLength.optional(),
 });
+
+type TransactionSeries = Pick<CreateTransactionDTO, 'category' | 'currentInstallment' | 'totalInstallments'>;
+
+export function transactionCount(item: TransactionSeries, repeatMonths: number): number {
+  if (item.category === 'installment') return (item.totalInstallments ?? 1) - (item.currentInstallment ?? 1) + 1;
+  if (item.category === 'fixed' || item.category === 'recurring') return repeatMonths;
+  return 1;
+}
+
+function validateProjection(
+  item: Omit<z.infer<typeof createTransactionFields>, 'profileId'>,
+  repeatMonths: number,
+  ctx: z.RefinementCtx,
+  path: (string | number)[] = [],
+) {
+  const count = transactionCount(item, repeatMonths);
+  if (count < 1) {
+    ctx.addIssue({ code: 'custom', path: [...path, 'currentInstallment'],
+      message: 'A parcela atual deve estar entre 1 e o total de parcelas.' });
+  }
+  if (item.amountMode === 'total') {
+    if (item.category !== 'installment') {
+      ctx.addIssue({ code: 'custom', path: [...path, 'amountMode'],
+        message: 'O valor total da compra é aplicável a parcelamentos.' });
+    } else if (toCents(item.amount) < (item.totalInstallments ?? 1)) {
+      ctx.addIssue({ code: 'custom', path: [...path, 'amount'],
+        message: 'Cada parcela precisa valer pelo menos R$ 0,01.' });
+    }
+  }
+  if (count > 1 && addMonths(parseCalendarDate(item.date), count - 1).getUTCFullYear() > 9999) {
+    ctx.addIssue({ code: 'custom', path: [...path, 'date'],
+      message: 'A projeção ultrapassa o ano máximo de 9999.' });
+  }
+}
+
+export const createTransactionSchema = createTransactionFields.extend({
+  repeatMonths: seriesLength.default(12),
+}).superRefine((item, ctx) => validateProjection(item, item.repeatMonths, ctx));
 
 export const updateTransactionSchema = z.object({
   profileId: z.string().min(1).optional(),
   type: z.enum(['income', 'expense']).optional(),
   category: z.enum(['fixed', 'recurring', 'installment', 'daily']).optional(),
-  amount: z.coerce
-    .number({ message: 'O valor deve ser um número válido' })
-    .positive('O valor deve ser positivo')
-    .transform((val) => Math.round(val * 100) / 100)
-    .optional(),
+  amount: amountSchema.optional(),
   description: z.string().trim().min(1, 'A descrição não pode ser vazia').optional(),
-  date: z.string().min(1, 'Data inválida').optional(),
-  currentInstallment: z.coerce.number().int().positive().optional().nullable(),
-  totalInstallments: z.coerce.number().int().positive().optional().nullable(),
+  date: calendarDateSchema.optional(),
+  currentInstallment: installmentNumber,
+  totalInstallments: installmentNumber,
   groupId: z.string().optional().nullable(),
   status: z.enum(['pending', 'paid', 'overdue']).optional(),
-  paymentDate: z.string().nullable().optional(),
-});
+  paymentDate: paymentDateSchema,
+}).refine(
+  item => item.currentInstallment == null || item.totalInstallments == null ||
+    item.currentInstallment <= item.totalInstallments,
+  { path: ['currentInstallment'], message: 'A parcela atual deve estar entre 1 e o total de parcelas.' },
+);
 
 export const updateStatusSchema = z.object({
   status: z.enum(['pending', 'paid', 'overdue']).optional(),
-  paymentDate: z.string().nullable().optional(),
+  paymentDate: paymentDateSchema,
 });
 
 export const payslipExtractedItemSchema = z.object({
@@ -268,12 +327,13 @@ export const payslipExtractedItemSchema = z.object({
 
 export const batchCreateTransactionSchema = z.object({
   profileId: z.string().min(1, 'O profileId é obrigatório'),
-  repeatMonths: z.coerce.number().int().min(1).optional(),
-  transactions: z.array(
-    createTransactionSchema.omit({ profileId: true }).extend({
-      repeatMonths: z.coerce.number().int().min(1).optional(),
-    })
-  ),
+  repeatMonths: seriesLength.optional(),
+  transactions: z.array(createTransactionFields.omit({ profileId: true }))
+    .min(1, 'Informe pelo menos uma transação.'),
+}).superRefine((batch, ctx) => {
+  batch.transactions.forEach((item, index) => {
+    validateProjection(item, batch.repeatMonths ?? item.repeatMonths ?? 1, ctx, ['transactions', index]);
+  });
 });
 
 export type CreateProfileInput = z.infer<typeof createProfileSchema>;

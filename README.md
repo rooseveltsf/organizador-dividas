@@ -14,6 +14,7 @@
   - [2. Dashboard Financeiro Mensal](#2-dashboard-financeiro-mensal)
   - [3. Controle Avançado de Dívidas e Parcelamentos](#3-controle-avançado-de-dívidas-e-parcelamentos)
   - [4. Importação Inteligente de Contracheque (PDF)](#4-importação-inteligente-de-contracheque-pdf)
+  - [5. Compromissos futuros](#5-compromissos-futuros)
 - [Estrutura de Diretórios](#-estrutura-de-diretórios)
 - [Guia de Instalação e Execução](#-guia-de-instalação-e-execução)
   - [Pré-requisitos](#pré-requisitos)
@@ -119,6 +120,14 @@ organizador-dividas/
   - **Modo 2 ("Detalhado"):** Tabela interativa com seleção múltipla, edição inline da descrição, valor, tipo e categoria, ajuste de parcelas e inclusão de itens manuais.
 - **Projeção em Lote:** Definição da data de recebimento e replicação automática dos proventos e deduções fixas para 1, 6 ou 12 meses futuros via `POST /api/transactions/batch`.
 
+### 5. Compromissos futuros
+
+A visão abre no próximo mês civil. Escolha o perfil e navegue entre os meses. **Ver no extrato** abre o mês de vencimento e localiza o lançamento correspondente.
+
+- O total previsto soma as despesas **fixas, recorrentes e parceladas** cadastradas no mês selecionado, incluindo as pagas. O valor em aberto soma as despesas dessas categorias com status pendente ou vencido. Receitas e despesas cotidianas ficam no extrato.
+- A numeração da parcela vem de `currentInstallment` e `totalInstallments`. O valor e a quantidade de parcelas restantes consideram os registros em aberto com o mesmo `groupId` e perfil, cuja data de vencimento esteja em um mês posterior ao exibido. Um lançamento sem `groupId` aparece sem vínculo de série.
+- A consulta usa `profileId`, `type=expense` e `startDate` no primeiro dia do próximo mês. Cada cálculo usa as datas, categorias, valores e situações atualmente gravadas, inclusive após edições ou exclusões individuais. O horizonte termina nos registros cadastrados.
+
 ---
 
 ## 📁 Estrutura de Diretórios
@@ -213,6 +222,17 @@ organizador-dividas/
    - **Frontend:** [http://localhost:5173](http://localhost:5173)
    - **Backend API:** [http://localhost:3000](http://localhost:3000)
 
+O frontend usa `/api` na mesma origem por padrão. No desenvolvimento e no
+`npm run preview -w @organizador/web`, o Vite encaminha esse caminho à API
+local. Se a API usar outra porta, defina `API_PROXY_TARGET` em
+`apps/web/.env.local` com a origem correspondente, por exemplo
+`http://localhost:3001`.
+
+Em produção, configure o servidor web para encaminhar `/api` à API. Para
+publicar o frontend e a API em origens separadas, defina
+`VITE_API_BASE_URL=https://api.exemplo.com/api` no ambiente do build ou em
+`apps/web/.env.production.local`.
+
 ---
 
 ### Scripts Disponíveis
@@ -226,7 +246,15 @@ Na raiz do projeto (`package.json`), você pode executar:
 | `npm run dev:api` | Inicia somente a API com recarregamento a quente (`ts-node-dev`). |
 | `npm run dev:web` | Inicia somente o Frontend Vite. |
 | `npm run build` | Compila os contratos compartilhados, gera tokens do Panda CSS e builda a API e Frontend para produção. |
+| `npm test` | Verifica as regras financeiras e de datas com SQLite temporário e porta HTTP efêmera. |
 | `npm run clean` | Remove os diretórios `dist` de todos os workspaces. |
+
+A suíte de auditoria usa Node.js 22.13 ou superior e o cliente Prisma gerado com `npm run prisma:generate -w @organizador/api`. O banco temporário é criado a partir do schema e removido ao fim da execução.
+
+Para testar falhas, concorrência e navegação de compromissos futuros no frontend, rode `npm run build -w @organizador/web`
+e depois `node --test tests/api-reliability.browser.cjs`. A suíte usa uma API
+simulada com dados fictícios e um navegador Chromium local. Defina
+`BROWSER_PATH` se o executável estiver fora dos caminhos padrão do teste.
 
 ---
 
@@ -251,7 +279,11 @@ A API roda por padrão na porta `3000` e atende nos prefixos `/` e `/api`:
 | `POST` | `/api/transactions/batch` | Criação em lote de transações (usado no contracheque) com projeção futura. |
 | `PATCH`| `/api/transactions/:id/status` | Alterna status (`pending` / `paid` / `overdue`) e preenche `paymentDate`. |
 | `PUT`  | `/api/transactions/:id` | Atualiza os dados de uma transação existente. |
-| `DELETE`| `/api/transactions/:id?deleteAll=true` | Exclui a transação (ou todas as parcelas da série com `deleteAll=true`). |
+| `DELETE`| `/api/transactions/:id?deleteAll=true` | Exclui o selecionado e os futuros da série no mesmo perfil. Sem o parâmetro, exclui somente o selecionado. |
+
+Para parcelamentos, os dois endpoints de criação recebem `amount` em reais. O padrão é o valor de cada parcela. Com `amountMode: "total"`, o valor representa a compra inteira e os centavos restantes vão para as primeiras parcelas da numeração original. Por exemplo, R$ 100,00 em três parcelas gera R$ 33,34, R$ 33,33 e R$ 33,33. As séries ficam limitadas a 120 parcelas ou meses.
+
+Envie vencimentos e pagamentos como `YYYY-MM-DD`. A API também aceita datas ISO completas e usa o dia civil indicado no texto. A projeção usa o dia da parcela inicial e, nos meses mais curtos, o último dia do mês.
 
 ### Leitura de Contracheque (PDF)
 | Método | Rota | Descrição |

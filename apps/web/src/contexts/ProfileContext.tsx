@@ -1,7 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import type { Profile, CreateProfileDTO, UpdateProfileDTO, ApiResponse } from '@organizador/shared';
+import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import type { Profile, CreateProfileDTO, UpdateProfileDTO } from '@organizador/shared';
 
-const API_BASE_URL = 'http://localhost:3000';
+import { requestApi } from '../api';
 const STORAGE_KEY = '@organizador:active_profile_id';
 
 /**
@@ -52,7 +52,6 @@ export function adjustHexBrightness(hex: string, percent: number = -12): string 
 export interface ProfileContextData {
   profiles: Profile[];
   activeProfile: Profile | null;
-  isLoading: boolean;
   profileListStatus: 'loading' | 'ready' | 'error';
   selectProfile: (profile: Profile | null) => void;
   fetchProfiles: () => Promise<void>;
@@ -63,186 +62,137 @@ export interface ProfileContextData {
 
 export const ProfileContext = createContext<ProfileContextData | undefined>(undefined);
 
-interface ProfileProviderProps {
-  children: ReactNode;
-}
-
-export const ProfileProvider: React.FC<ProfileProviderProps> = ({ children }) => {
+export function ProfileProvider({ children }: { children: ReactNode }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [activeProfile, setActiveProfile] = useState<Profile | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-
+  const [activeProfileId, setActiveProfileId] = useState(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) ?? null;
   const [profileListStatus, setProfileListStatus] = useState<ProfileContextData['profileListStatus']>('loading');
+  const listRequest = useRef<AbortController | null>(null);
+  const selectionIntent = useRef(0);
+  const pendingProfiles = useRef(new Set<string>());
 
-  // Efeito dinâmico que injeta as variáveis CSS globais no :root do documento
+  useEffect(() => {
+    try {
+      if (activeProfileId) localStorage.setItem(STORAGE_KEY, activeProfileId);
+      else localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // O perfil pode ser usado mesmo se o navegador bloquear o armazenamento.
+    }
+  }, [activeProfileId]);
+
   useEffect(() => {
     const root = document.documentElement;
-    if (activeProfile) {
-      const primary = activeProfile.primaryColor || '#3b82f6';
-      const secondary = activeProfile.secondaryColor || '#8b5cf6';
-      const primaryHover = adjustHexBrightness(primary, -12);
-      const primarySoft = hexToRgba(primary, 0.15);
-      const secondarySoft = hexToRgba(secondary, 0.15);
-
-      root.style.setProperty('--profile-primary', primary);
-      root.style.setProperty('--profile-primary-hover', primaryHover);
-      root.style.setProperty('--profile-primary-soft', primarySoft);
-      root.style.setProperty('--profile-secondary', secondary);
-      root.style.setProperty('--profile-secondary-soft', secondarySoft);
-    } else {
-      // Fallback para valores padrão quando nenhum perfil estiver ativo
-      root.style.setProperty('--profile-primary', '#3b82f6');
-      root.style.setProperty('--profile-primary-hover', '#2563eb');
-      root.style.setProperty('--profile-primary-soft', 'rgba(59, 130, 246, 0.15)');
-      root.style.setProperty('--profile-secondary', '#8b5cf6');
-      root.style.setProperty('--profile-secondary-soft', 'rgba(139, 92, 246, 0.15)');
-    }
+    const primary = activeProfile?.primaryColor || '#3b82f6';
+    const secondary = activeProfile?.secondaryColor || '#8b5cf6';
+    root.style.setProperty('--profile-primary', primary);
+    root.style.setProperty('--profile-primary-hover', activeProfile ? adjustHexBrightness(primary, -12) : '#2563eb');
+    root.style.setProperty('--profile-primary-soft', hexToRgba(primary, 0.15));
+    root.style.setProperty('--profile-secondary', secondary);
+    root.style.setProperty('--profile-secondary-soft', hexToRgba(secondary, 0.15));
   }, [activeProfile]);
 
   const selectProfile = useCallback((profile: Profile | null) => {
-    setActiveProfile(profile);
-    if (profile) {
-      localStorage.setItem(STORAGE_KEY, profile.id);
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
-    }
+    selectionIntent.current += 1;
+    setActiveProfileId(profile?.id ?? null);
   }, []);
 
   const fetchProfiles = useCallback(async () => {
+    listRequest.current?.abort();
+    const controller = new AbortController();
+    listRequest.current = controller;
     setProfileListStatus('loading');
-    setIsLoading(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/profiles`);
-      if (!response.ok) {
-        throw new Error(`Falha ao buscar perfis: status ${response.status}`);
-      }
-      const result: ApiResponse<Profile[]> = await response.json();
-      if (result.success && Array.isArray(result.data)) {
-        setProfiles(result.data);
-        setProfileListStatus('ready');
 
-        // Restaura perfil ativo salvo anteriormente se existente
-        const savedId = localStorage.getItem(STORAGE_KEY);
-        if (savedId) {
-          const found = result.data.find((p) => p.id === savedId);
-          if (found) {
-            setActiveProfile(found);
-          }
-        }
-      } else {
-        setProfileListStatus('error');
+    try {
+      const list = await requestApi<Profile[]>('/profiles', 'Não foi possível carregar a lista de perfis.', {
+        signal: controller.signal,
+      });
+      if (!Array.isArray(list)) throw new Error();
+      if (listRequest.current === controller) {
+        setProfiles(list);
+        setProfileListStatus('ready');
       }
-    } catch (error) {
-      setProfileListStatus('error');
-      console.error('Erro ao carregar perfis:', error);
+    } catch {
+      if (listRequest.current === controller) setProfileListStatus('error');
     } finally {
-      setIsLoading(false);
+      if (listRequest.current === controller) listRequest.current = null;
     }
   }, []);
 
-  const createProfile = useCallback(
-    async (data: CreateProfileDTO): Promise<Profile> => {
-      setIsLoading(true);
-      try {
-        const response = await fetch(`${API_BASE_URL}/profiles`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data),
-        });
-
-        if (!response.ok) {
-          const errorData: ApiResponse = await response.json().catch(() => ({ success: false }));
-          throw new Error(errorData.message || 'Erro ao criar perfil.');
-        }
-
-        const result: ApiResponse<Profile> = await response.json();
-        if (!result.data) throw new Error('Dados do perfil não retornados pela API.');
-
-        const newProfile = result.data;
-        setProfiles((prev) => [...prev, newProfile]);
-        selectProfile(newProfile);
-        return newProfile;
-      } catch (error) {
-        console.error('Erro ao criar perfil:', error);
-        throw error;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [selectProfile]
-  );
-
-  const updateProfile = useCallback(
-    async (id: string, data: UpdateProfileDTO): Promise<Profile> => {
-      setIsLoading(true);
-      try {
-        const response = await fetch(`${API_BASE_URL}/profiles/${id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data),
-        });
-
-        if (!response.ok) {
-          const errorData: ApiResponse = await response.json().catch(() => ({ success: false }));
-          throw new Error(errorData.message || 'Erro ao atualizar perfil.');
-        }
-
-        const result: ApiResponse<Profile> = await response.json();
-        if (!result.data) throw new Error('Dados do perfil não retornados pela API.');
-
-        const updated = result.data;
-        setProfiles((prev) => prev.map((p) => (p.id === id ? updated : p)));
-        if (activeProfile?.id === id) {
-          setActiveProfile(updated);
-        }
-        return updated;
-      } catch (error) {
-        console.error('Erro ao atualizar perfil:', error);
-        throw error;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [activeProfile]
-  );
-
-  const deleteProfile = useCallback(
-    async (id: string): Promise<void> => {
-      setIsLoading(true);
-      try {
-        const response = await fetch(`${API_BASE_URL}/profiles/${id}`, {
-          method: 'DELETE',
-        });
-
-        if (!response.ok) {
-          const errorData: ApiResponse = await response.json().catch(() => ({ success: false }));
-          throw new Error(errorData.message || 'Erro ao remover perfil.');
-        }
-
-        setProfiles((prev) => prev.filter((p) => p.id !== id));
-        if (activeProfile?.id === id) {
-          selectProfile(null);
-        }
-      } catch (error) {
-        console.error('Erro ao remover perfil:', error);
-        throw error;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [activeProfile, selectProfile]
-  );
-
   useEffect(() => {
-    fetchProfiles();
+    void fetchProfiles();
+    return () => {
+      listRequest.current?.abort();
+      listRequest.current = null;
+    };
   }, [fetchProfiles]);
+
+  function refreshPendingList() {
+    // Uma consulta iniciada antes da gravação pode retornar a lista anterior.
+    if (listRequest.current) void fetchProfiles();
+  }
+
+  async function createProfile(data: CreateProfileDTO) {
+    const intent = ++selectionIntent.current;
+    const error = 'Não foi possível criar o perfil. Tente novamente.';
+    const created = await requestApi<Profile>('/profiles', error, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!created?.id) throw new Error(error);
+    setProfiles((previous) => [...previous.filter((profile) => profile.id !== created.id), created]);
+    if (selectionIntent.current === intent) selectProfile(created);
+    refreshPendingList();
+    return created;
+  }
+
+  async function mutateProfile<T>(id: string, mutate: () => Promise<T>) {
+    if (pendingProfiles.current.has(id)) throw new Error('Há uma alteração em andamento neste perfil.');
+    pendingProfiles.current.add(id);
+    try {
+      const result = await mutate();
+      refreshPendingList();
+      return result;
+    } finally {
+      pendingProfiles.current.delete(id);
+    }
+  }
+
+  function updateProfile(id: string, data: UpdateProfileDTO) {
+    return mutateProfile(id, async () => {
+      const error = 'Não foi possível salvar as alterações do perfil. Tente novamente.';
+      const updated = await requestApi<Profile>('/profiles/' + encodeURIComponent(id), error, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (updated?.id !== id) throw new Error(error);
+      setProfiles((previous) => previous.map((profile) => profile.id === id ? updated : profile));
+      return updated;
+    });
+  }
+
+  function deleteProfile(id: string) {
+    return mutateProfile(id, async () => {
+      await requestApi('/profiles/' + encodeURIComponent(id), 'Não foi possível excluir o perfil. Tente novamente.', {
+        method: 'DELETE',
+      });
+      setProfiles((previous) => previous.filter((profile) => profile.id !== id));
+      setActiveProfileId((previous) => previous === id ? null : previous);
+    });
+  }
 
   return (
     <ProfileContext.Provider
       value={{
         profiles,
         activeProfile,
-        isLoading,
         selectProfile,
         profileListStatus,
         fetchProfiles,
@@ -254,7 +204,7 @@ export const ProfileProvider: React.FC<ProfileProviderProps> = ({ children }) =>
       {children}
     </ProfileContext.Provider>
   );
-};
+}
 
 export function useProfiles(): ProfileContextData {
   const context = useContext(ProfileContext);

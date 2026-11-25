@@ -1,6 +1,10 @@
 import React, { useId, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { Transaction, TransactionCategory, TransactionType } from '@organizador/shared';
+import {
+  MAX_SERIES_LENGTH, addMonths, calendarDateSchema, installmentCents,
+  parseCalendarDate, toCents, validMoneyCents,
+} from '@organizador/shared';
 import { useTransactions } from '../contexts/TransactionContext';
 import { Button, Input, Select } from './ui';
 import { formatCurrency } from './MonthlySummary';
@@ -26,11 +30,7 @@ function periodDate(month: number, year: number) {
   return [year, String(month).padStart(2, '0'), String(day).padStart(2, '0')].join('-');
 }
 
-function monthlyDate(base: Date, offset: number) {
-  const last = new Date(base.getFullYear(), base.getMonth() + offset + 1, 0, 12);
-  last.setDate(Math.min(last.getDate(), base.getDate()));
-  return last;
-}
+const dateLabel = new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' });
 
 function moneyInput(cents: number) {
   return (cents / 100).toFixed(2).replace('.', ',');
@@ -58,30 +58,42 @@ export function TransactionForm({ initialData, fixedType, onSuccess, onCancel, o
   const count = Number(total);
   const first = Number(current);
   const monthsCount = Number(months);
-  const cents = Math.round(Number(amount.trim().replace(',', '.')) * 100);
-  const unit = installment && byTotal ? Math.round(cents / count) : cents;
-  const base = new Date(date + 'T12:00:00');
+  const cents = toCents(Number(amount.trim().replace(',', '.')));
+  const fromTotal = installment && byTotal;
+  const unit = fromTotal ? installmentCents(cents, count, first) : cents;
+  const base = parseCalendarDate(date);
   const generated = initialData ? 1 : installment ? count - first + 1 : repeats ? monthsCount : 1;
-  const last = monthlyDate(base, generated - 1);
+  const last = addMonths(base, generated - 1);
   const errors: Record<string, string> = {};
   if (!description.trim()) errors.description = 'Informe a descrição.';
-  if (!/^\d+(?:[.,]\d{1,2})?$/.test(amount.trim()) || !Number.isSafeInteger(cents) || cents <= 0)
-    errors.amount = 'Informe um valor positivo com até duas casas decimais.';
-  else if (installment && byTotal && count > 0 && unit < 1)
+  if (!/^\d+(?:[.,]\d{1,2})?$/.test(amount.trim()) || !validMoneyCents(cents))
+    errors.amount = 'Informe um valor positivo representável com até duas casas decimais.';
+  else if (fromTotal && cents < count)
     errors.amount = 'Cada parcela precisa valer pelo menos R$ 0,01.';
-  if (!Number.isFinite(base.getTime())) errors.date = 'Informe uma data válida.';
+  if (!calendarDateSchema.safeParse(date).success) errors.date = 'Informe uma data válida.';
   if (installment) {
-    if (!Number.isInteger(count) || count < 1 || count > 120) errors.total = 'Informe um total de 1 a 120 parcelas.';
+    if (!Number.isInteger(count) || count < 1 || count > MAX_SERIES_LENGTH)
+      errors.total = `Informe um total de 1 a ${MAX_SERIES_LENGTH} parcelas.`;
     if (!Number.isInteger(first) || first < 1 || first > count) errors.current = 'Informe uma parcela entre 1 e o total de parcelas.';
   }
-  if (repeats && (!Number.isSafeInteger(monthsCount) || monthsCount < 1 || (!errors.date && !Number.isFinite(last.getTime()))))
-    errors.months = 'Informe uma quantidade inteira de meses com uma data final válida.';
+  if (repeats && (!Number.isInteger(monthsCount) || monthsCount < 1 || monthsCount > MAX_SERIES_LENGTH))
+    errors.months = `Informe de 1 a ${MAX_SERIES_LENGTH} meses.`;
+  if (last.getUTCFullYear() > 9999) errors.date = 'A projeção ultrapassa o ano máximo de 9999.';
   const canPreview = !Object.keys(errors).some(key => key !== 'description');
+  const previewValues = canPreview ? Array.from({ length: generated }, (_, index) =>
+    fromTotal ? installmentCents(cents, count, first + index) : unit
+  ) : [];
+  const lastUnit = previewValues[previewValues.length - 1];
+  const previewTotal = previewValues.reduce((sum, value) => sum + value, 0);
+  const previewAmount = lastUnit === unit
+    ? formatCurrency(unit / 100)
+    : formatCurrency(lastUnit / 100) + ' a ' + formatCurrency(unit / 100);
   const error = (name: string) => attempted ? errors[name] : undefined;
 
   function changeMode(next: boolean) {
     if (next === byTotal) return;
-    if (!errors.amount && !errors.total && amount.trim()) setAmount(moneyInput(next ? cents * count : unit));
+    if (!errors.amount && !errors.total && !errors.current && amount.trim())
+      setAmount(moneyInput(next ? cents * count : unit));
     setByTotal(next);
   }
 
@@ -116,7 +128,11 @@ export function TransactionForm({ initialData, fixedType, onSuccess, onCancel, o
           ...(initialData.category === 'installment' && !installment && { currentInstallment: null, totalInstallments: null }),
         });
       } else {
-        await addTransaction({ ...fields, profileId: '', status: 'pending', ...(repeats && { repeatMonths: monthsCount }) });
+        await addTransaction({
+          ...fields, profileId: '', status: 'pending',
+          ...(fromTotal && { amount: cents / 100, amountMode: 'total' }),
+          ...(repeats && { repeatMonths: monthsCount }),
+        });
         setDescription('');
         setAmount('');
         setCurrent('1');
@@ -168,21 +184,20 @@ export function TransactionForm({ initialData, fixedType, onSuccess, onCancel, o
         <div className="transaction-pair">
           <Input label="Parcela atual" name="current" type="number" min={1} max={count || undefined} required value={current}
             onChange={e => setCurrent(e.target.value)} errorMessage={error('current')} />
-          <Input label="Total de parcelas" name="total" type="number" min={1} max={120} required value={total}
+          <Input label="Total de parcelas" name="total" type="number" min={1} max={MAX_SERIES_LENGTH} required value={total}
             onChange={e => setTotal(e.target.value)} errorMessage={error('total')} />
         </div>
       </>}
-      {repeats && <Input label="Quantidade de meses (inclui o primeiro)" type="number" name="months" required min={1}
+      {repeats && <Input label="Quantidade de meses (inclui o primeiro)" type="number" name="months" required min={1} max={MAX_SERIES_LENGTH}
         value={months} onChange={e => setMonths(e.target.value)} errorMessage={error('months')} />}
       <div className="transaction-preview">
         <strong>{initialData ? 'Após a alteração' : 'Ao salvar'}</strong>
         {canPreview ? <>
-          <p>{generated === 1 ? '1 lançamento' : generated + ' lançamentos mensais'} de {formatCurrency(unit / 100)}
-            {generated === 1 ? ' em ' : ' cada, de '}{base.toLocaleDateString('pt-BR')}
-            {generated > 1 && ' até ' + last.toLocaleDateString('pt-BR')}.</p>
+          <p>{generated === 1 ? '1 lançamento' : generated + ' lançamentos mensais'} de {previewAmount}
+            {generated === 1 ? ' em ' : lastUnit === unit ? ' cada, de ' : ', de '}{dateLabel.format(base)}
+            {generated > 1 && ' até ' + dateLabel.format(last)}.</p>
           {installment && <p>{!initialData && generated > 1 ? 'Parcelas ' + first + ' a ' + count : 'Parcela ' + first + ' de ' + count}
-            {' · Total ' + formatCurrency(unit * generated / 100)}</p>}
-          {installment && byTotal && unit * count !== cents && <p>Com o arredondamento por parcela, a compra soma {formatCurrency(unit * count / 100)}.</p>}
+            {' · Total ' + formatCurrency(previewTotal / 100)}</p>}
         </> : <p>Preencha os valores e a data para conferir o lançamento.</p>}
       </div>
       <p className="transaction-error" role="alert">{failure}</p>

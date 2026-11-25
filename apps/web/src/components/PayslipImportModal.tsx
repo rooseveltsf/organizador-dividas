@@ -18,24 +18,27 @@ import {
   X,
 } from 'lucide-react';
 import type {
-  ApiResponse,
   BatchCreateTransactionDTO,
   PayslipParseResult,
   TransactionCategory,
   TransactionType,
 } from '@organizador/shared';
+import {
+  MAX_SERIES_LENGTH, addMonths, calendarDateSchema, parseCalendarDate,
+  toCents, transactionCount, validMoneyCents,
+} from '@organizador/shared';
 import { useProfiles } from '../contexts/ProfileContext';
 import { useTransactions } from '../contexts/TransactionContext';
+import { requestApi } from '../api';
 import { Button, Input, ModalLayer, Select } from './ui';
 import './PayslipImportModal.css';
 
-const API_BASE_URL = 'http://localhost:3000';
 const steps = ['Arquivo', 'Conferência', 'Lançamentos', 'Confirmação'] as const;
 type Step = (typeof steps)[number];
 type BatchItem = BatchCreateTransactionDTO['transactions'][number];
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-const month = new Intl.DateTimeFormat('pt-BR', { month: 'short', year: 'numeric' });
-const calendarDate = new Intl.DateTimeFormat('pt-BR');
+const month = new Intl.DateTimeFormat('pt-BR', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+const calendarDate = new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' });
 
 export interface PayslipImportModalProps {
   isOpen: boolean;
@@ -62,20 +65,11 @@ function countEntries(count: number) {
   return count + (count === 1 ? ' lançamento' : ' lançamentos');
 }
 
-function localDate(value: string) {
-  const [year, monthNumber, day] = value.split('-').map(Number);
-  return new Date(year, monthNumber - 1, day, 12);
-}
-
 function validAmount(amount: number) {
-  return Number.isFinite(amount) && Math.round(amount * 100) > 0;
+  return validMoneyCents(toCents(amount));
 }
 
-function lastMonth(start: Date, count: number) {
-  return new Date(start.getFullYear(), start.getMonth() + count - 1, 1);
-}
-
-function validInstallments(item: EditablePayslipItem, date: string) {
+function validInstallments(item: EditablePayslipItem) {
   const current = item.currentInstallment ?? 0;
   const total = item.totalInstallments ?? 0;
   return (
@@ -83,23 +77,14 @@ function validInstallments(item: EditablePayslipItem, date: string) {
     Number.isSafeInteger(total) &&
     current >= 1 &&
     current <= total &&
-    (!date || Number.isFinite(lastMonth(localDate(date), total - current + 1).getTime()))
+    total <= MAX_SERIES_LENGTH
   );
 }
 
-// A API projeta fixos e recorrentes a partir da data de cada item.
-// Parcelas seguem sua própria sequência, inclusive a parcela atual.
-function occurrences(item: BatchItem, repeatMonths: number) {
-  if (item.category === 'installment')
-    return (item.totalInstallments ?? 1) - (item.currentInstallment ?? 1) + 1;
-  if (item.category === 'fixed' || item.category === 'recurring') return repeatMonths;
-  return 1;
-}
-
 function periodLabel(date: string, count: number) {
-  const start = localDate(date);
+  const start = parseCalendarDate(date);
   if (count === 1) return calendarDate.format(start);
-  const end = lastMonth(start, count);
+  const end = addMonths(start, count - 1);
   return month.format(start) + ' a ' + month.format(end);
 }
 
@@ -159,7 +144,7 @@ function EntryFields({
         label="Data do lançamento"
         type="date"
         value={date}
-        errorMessage={item.selected && !date ? 'Informe a data.' : undefined}
+        errorMessage={item.selected && !calendarDateSchema.safeParse(date).success ? 'Informe uma data válida.' : undefined}
         onChange={(e) => update({ suggestedDate: e.target.value })}
       />
     </fieldset>
@@ -168,7 +153,7 @@ function EntryFields({
 
 function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'isOpen'>) {
   const { activeProfile } = useProfiles();
-  const { fetchTransactions, selectedMonth, selectedYear } = useTransactions();
+  const { refreshTransactions } = useTransactions();
   const [step, setStep] = useState<Step>('Arquivo');
   const [pane, setPane] = useState<'document' | 'review'>('review');
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -236,23 +221,18 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
       return;
     }
     setReading(file.name);
+    const failure = 'Não foi possível ler o PDF. Confira o arquivo e a conexão e tente novamente.';
     try {
       const form = new FormData();
       form.append('file', file);
-      const response = await fetch(API_BASE_URL + '/api/payslip/parse', {
+      const data = await requestApi<PayslipParseResult>('/payslip/parse', failure, {
         method: 'POST',
         body: form,
       });
-      const result: ApiResponse<PayslipParseResult> = await response.json();
-      if (!response.ok || !result.success || !result.data) {
-        throw new Error(result.message || 'Falha ao ler o contracheque.');
-      }
-      const data = result.data;
+      if (!data) throw new Error(failure);
       const hasAdvance = Boolean(data.hasAdvancePayment && (data.advanceAmount ?? 0) > 0);
-      const reference = data.referenceMonth ? localDate(data.referenceMonth + '-01') : undefined;
-      const nextMonth = reference
-        ? new Date(reference.getFullYear(), reference.getMonth() + 1, 5, 12)
-        : undefined;
+      const reference = data.referenceMonth ? parseCalendarDate(data.referenceMonth + '-01') : undefined;
+      const nextMonth = reference ? addMonths(reference, 1) : undefined;
       const balance: EditablePayslipItem = {
         tempId: 'balance',
         description: hasAdvance ? 'Saldo de Salário (5º dia útil)' : 'Salário Líquido',
@@ -263,10 +243,7 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
         suggestedDate:
           data.netBalanceDate ||
           (nextMonth
-            ? nextMonth.getFullYear() +
-              '-' +
-              String(nextMonth.getMonth() + 1).padStart(2, '0') +
-              '-05'
+            ? nextMonth.toISOString().slice(0, 7) + '-05'
             : ''),
       };
       const advance: EditablePayslipItem = {
@@ -296,12 +273,8 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
       setOnlyIncome(true);
       setRepeatMonths(1);
       navigate('Conferência');
-    } catch (error) {
-      setFileError(
-        error instanceof Error && !(error instanceof TypeError || error instanceof SyntaxError)
-          ? error.message
-          : 'Não foi possível ler o PDF. Verifique a conexão e tente novamente.',
-      );
+    } catch {
+      setFileError(failure);
     } finally {
       setReading('');
     }
@@ -314,16 +287,19 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
   const checked = visible.filter((item) => item.selected).length;
   const selected = (mode === 'net' ? netEntries : items).filter((item) => item.selected);
   const itemDate = (item: EditablePayslipItem) => item.suggestedDate ?? balanceDate;
-  const invalid = selected.find(
-    (item) =>
+  const invalid = selected.find((item) => {
+    const date = itemDate(item);
+    return (
       !item.description.trim() ||
       !validAmount(item.amount) ||
-      !itemDate(item) ||
-      (item.category === 'installment' && !validInstallments(item, itemDate(item))),
-  );
+      !calendarDateSchema.safeParse(date).success ||
+      (item.category === 'installment' && !validInstallments(item)) ||
+      addMonths(parseCalendarDate(date), transactionCount(item, repeatMonths) - 1).getUTCFullYear() > 9999
+    );
+  });
   const transactions: BatchItem[] = selected.map((item) => ({
     description: item.description.trim(),
-    amount: Math.round(item.amount * 100) / 100,
+    amount: toCents(item.amount) / 100,
     type: item.type,
     category: item.category,
     date: itemDate(item),
@@ -331,7 +307,7 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
     currentInstallment: item.category === 'installment' ? item.currentInstallment : undefined,
     totalInstallments: item.category === 'installment' ? item.totalInstallments : undefined,
   }));
-  const total = transactions.reduce((sum, item) => sum + occurrences(item, repeatMonths), 0);
+  const total = transactions.reduce((sum, item) => sum + transactionCount(item, repeatMonths), 0);
   const issue = !selected.length
     ? 'Selecione pelo menos um lançamento.'
     : invalid
@@ -351,26 +327,19 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
     if (step !== 'Confirmação' || saving || receipt || issue || !activeProfile) return;
     setSaving(true);
     setSaveError('');
+    const failure = 'Não foi possível salvar os lançamentos do contracheque. Tente novamente.';
     try {
       const payload: BatchCreateTransactionDTO = {
         profileId: activeProfile.id,
         repeatMonths,
         transactions,
       };
-      const response = await fetch(API_BASE_URL + '/api/transactions/batch', {
+      const result = await requestApi<{ totalCreated: number }>('/transactions/batch', failure, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const result: ApiResponse<{ totalCreated: number }> = await response
-        .json()
-        .catch(() => ({ success: false }));
-      if (!response.ok || !result.success) {
-        throw new Error(
-          result.message || result.errors?.join(', ') || 'Falha ao registrar os lançamentos.',
-        );
-      }
-      const created = result.data?.totalCreated ?? total;
+      const created = result?.totalCreated ?? total;
       setReceipt(
         countEntries(created) +
           (created === 1 ? ' criado' : ' criados') +
@@ -378,14 +347,10 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
           activeProfile.name +
           '.',
       );
-      await fetchTransactions(selectedMonth, selectedYear);
+      await refreshTransactions(activeProfile.id);
       onSuccess?.();
-    } catch (error) {
-      setSaveError(
-        error instanceof Error && !(error instanceof TypeError)
-          ? error.message
-          : 'Verifique a conexão com o serviço de lançamentos.',
-      );
+    } catch {
+      setSaveError(failure);
     } finally {
       setSaving(false);
     }
@@ -395,7 +360,7 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
     return (
       <ul className="payslip-plan">
         {transactions.map((item, index) => {
-          const count = occurrences(item, repeatMonths);
+          const count = transactionCount(item, repeatMonths);
           return (
             <li key={selected[index].tempId}>
               <div>
@@ -408,7 +373,7 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
                   {periodLabel(item.date, count)}
                 </small>
                 {count > 1 && (
-                  <small>Primeira data · {calendarDate.format(localDate(item.date))}</small>
+                  <small>Primeira data · {calendarDate.format(parseCalendarDate(item.date))}</small>
                 )}
               </div>
               <div className={'payslip-amount ' + item.type}>
@@ -571,7 +536,7 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
                       Competência{' '}
                       <strong>
                         {parsed.referenceMonth
-                          ? month.format(localDate(parsed.referenceMonth + '-01'))
+                          ? month.format(parseCalendarDate(parsed.referenceMonth + '-01'))
                           : 'A conferir'}
                       </strong>
                     </span>
@@ -727,7 +692,7 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
                     const itemLabel = mode === 'net'
                       ? item.isAdvance ? 'Adiantamento (quinzena)' : 'Saldo líquido'
                       : item.description || 'Rubrica sem descrição';
-                    const installmentError = item.selected && !validInstallments(item, itemDate(item));
+                    const installmentError = item.selected && !validInstallments(item);
                     const installmentErrorId = id + '-installments-' + item.tempId;
                     return (
                     <article key={item.tempId} className="payslip-entry">
@@ -825,6 +790,7 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
                                 label="Total de parcelas"
                                 type="number"
                                 min={item.currentInstallment || 1}
+                                max={MAX_SERIES_LENGTH}
                                 size="sm"
                                 value={item.totalInstallments || ''}
                                 hasError={installmentError}
@@ -835,7 +801,9 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
                                   })
                                 }
                               />
-                              {installmentError && <p id={installmentErrorId} className="payslip-error wide">Informe uma parcela atual entre 1 e o total, com uma data final válida.</p>}
+                              {installmentError && <p id={installmentErrorId} className="payslip-error wide">
+                                Informe uma parcela atual entre 1 e o total, limitado a {MAX_SERIES_LENGTH} parcelas.
+                              </p>}
                             </>
                           )}
                         </fieldset>

@@ -1,11 +1,13 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTransactions } from '../contexts/TransactionContext';
 import { useProfiles } from '../contexts/ProfileContext';
 import { Button, Modal } from '../components/ui';
 import { MonthlySummary, formatCurrency } from '../components/MonthlySummary';
 import { NotebookHeader } from '../components/NotebookHeader';
+import { NotebookViews } from '../components/NotebookViews';
 import { TransactionForm } from '../components/TransactionForm';
 import { PayslipImportModal } from '../components/PayslipImportModal';
+import { formatDate, MONTH_NAMES } from '../calendar';
 import type { Transaction } from '@organizador/shared';
 import { css } from '@/styled-system/css';
 import {
@@ -24,38 +26,12 @@ import {
   FileText,
 } from 'lucide-react';
 
-const MONTH_NAMES = [
-  'Janeiro',
-  'Fevereiro',
-  'Março',
-  'Abril',
-  'Maio',
-  'Junho',
-  'Julho',
-  'Agosto',
-  'Setembro',
-  'Outubro',
-  'Novembro',
-  'Dezembro',
-];
-
 const CATEGORY_TRANSLATIONS: Record<string, string> = {
   fixed: 'Fixa',
   recurring: 'Recorrente',
   installment: 'Parcelada',
   daily: 'Cotidiana',
 };
-
-function formatDate(dateStr: string): string {
-  if (!dateStr) return '';
-  const cleanDate = dateStr.split('T')[0];
-  const parts = cleanDate.split('-');
-  if (parts.length === 3) {
-    const [year, month, day] = parts;
-    return `${day}/${month}/${year}`;
-  }
-  return dateStr;
-}
 
 function overdueExpense(tx: Transaction, today: string) {
   return tx.type === 'expense' && tx.status !== 'paid' &&
@@ -111,9 +87,14 @@ interface DashboardProps {
   entryNotice: string;
   onProfileSwitch: () => void;
   onProfileDeleted: (name: string) => void;
+  onFutureCommitments: () => void;
+  transactionTarget: string | null;
+  onTransactionLocated: () => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ entryNotice, onProfileSwitch, onProfileDeleted }) => {
+export const Dashboard: React.FC<DashboardProps> = ({
+  entryNotice, onProfileSwitch, onProfileDeleted, onFutureCommitments, transactionTarget, onTransactionLocated,
+}) => {
   const { activeProfile, selectProfile, deleteProfile } = useProfiles();
   const {
     transactions,
@@ -123,6 +104,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ entryNotice, onProfileSwit
     setSelectedDate,
     hasMonthData,
     loadError,
+    pendingRows,
     fetchTransactions,
     deleteTransaction,
     toggleTransactionStatus,
@@ -131,7 +113,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ entryNotice, onProfileSwit
   const [activeTab, setActiveTab] = useState<TypeFilter>('all');
   const [situation, setSituation] = useState('all');
   const [search, setSearch] = useState('');
-  const [statusError, setStatusError] = useState('');
+  const [statusErrors, setStatusErrors] = useState(new Map<string, string>());
   const [deleteError, setDeleteError] = useState('');
   const [savedNotice, setSavedNotice] = useState('');
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -144,22 +126,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ entryNotice, onProfileSwit
   const [profileDeleteError, setProfileDeleteError] = useState('');
   const monthHeading = useRef<HTMLHeadingElement>(null);
   const ledgerHeading = useRef<HTMLHeadingElement>(null);
+  const targetRow = useRef<HTMLTableRowElement>(null);
   const restoreLedgerFocus = useRef(false);
+  const view = useMemo(() => ({ month: selectedMonth, year: selectedYear }), [selectedMonth, selectedYear]);
+  const currentView = useRef<typeof view | null>(null);
+
+  useLayoutEffect(() => {
+    currentView.current = view;
+    return () => { currentView.current = null; };
+  }, [view]);
 
   useLayoutEffect(() => {
     monthHeading.current?.focus();
   }, []);
 
   useLayoutEffect(() => {
-    if (!deletingTransaction && restoreLedgerFocus.current) {
+    if (!deletingTransaction && !isLoading && restoreLedgerFocus.current) {
       restoreLedgerFocus.current = false;
       if (document.activeElement === document.body) ledgerHeading.current?.focus();
     }
-  }, [deletingTransaction, savedNotice, loadError]);
+  }, [deletingTransaction, savedNotice, isLoading]);
 
   useEffect(() => {
     if (entryNotice) setSavedNotice(entryNotice);
   }, [entryNotice]);
+
+  useLayoutEffect(() => {
+    if (!transactionTarget || !hasMonthData || isLoading || loadError) return;
+    if (targetRow.current) targetRow.current.focus();
+    else {
+      setSavedNotice('O lançamento selecionado não está mais neste mês.');
+      ledgerHeading.current?.focus();
+    }
+    onTransactionLocated();
+  }, [transactionTarget, hasMonthData, isLoading, loadError, onTransactionLocated]);
 
   const now = new Date();
   const today = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
@@ -206,9 +206,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ entryNotice, onProfileSwit
 
   function changeMonth(offset: number) {
     const next = new Date(selectedYear, selectedMonth - 1 + offset, 1);
-    setStatusError('');
+    if (transactionTarget) onTransactionLocated();
+    setStatusErrors(new Map());
     setSavedNotice('');
     setSelectedDate(next.getMonth() + 1, next.getFullYear());
+  }
+
+  async function changeStatus(event: React.MouseEvent<HTMLButtonElement>, tx: Transaction) {
+    if (pendingRows.has(tx.id)) return;
+    const button = event.currentTarget;
+    const hadFocus = document.activeElement === button;
+    const paid = tx.status === 'paid';
+    setStatusErrors((previous) => {
+      const next = new Map(previous);
+      next.delete(tx.id);
+      return next;
+    });
+    setSavedNotice('');
+    try {
+      await toggleTransactionStatus(tx.id, paid ? 'pending' : 'paid');
+      if (currentView.current !== view) return;
+      restoreLedgerFocus.current = hadFocus && !button.isConnected;
+      setSavedNotice(tx.description + ': ' + (paid ? 'situação voltou a ficar em aberto' : tx.type === 'income' ? 'marcado como recebido' : 'marcado como pago') + '.');
+    } catch {
+      if (currentView.current !== view) return;
+      setStatusErrors((previous) => new Map(previous).set(
+        tx.id, 'Não foi possível alterar a situação de “' + tx.description + '”. Tente novamente.',
+      ));
+    }
   }
 
   return (
@@ -230,6 +255,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ entryNotice, onProfileSwit
           setIsDeleteProfileModalOpen(true);
         }} aria-label={'Excluir perfil ' + activeProfile?.name} title="Excluir perfil ativo"><Trash2 size={15} aria-hidden="true" /></button>
       </NotebookHeader>
+      <NotebookViews current="statement" onChange={onFutureCommitments} />
 
       <header className="month-header">
         <div className="month-nav">
@@ -250,7 +276,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ entryNotice, onProfileSwit
       </header>
 
       <p role="status" className="transaction-notice">{savedNotice}</p>
-      <MonthlySummary transactions={transactions} unavailableReason={hasMonthData ? undefined : loadError ? 'Resumo indisponível.' : 'Aguardando os lançamentos do mês.'} />
+      <MonthlySummary transactions={transactions} unavailableReason={loadError ? 'Resumo indisponível.' : hasMonthData ? undefined : 'Aguardando os lançamentos do mês.'} />
 
       <section className="ledger" aria-labelledby="ledger-title">
         <div className="ledger-heading">
@@ -285,18 +311,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ entryNotice, onProfileSwit
             </label>
           </div>
 
-        <p role="alert" className="transaction-error">{statusError || loadError}</p>
-        {!hasMonthData && !loadError ? (
-          <div className="ledger-empty">Carregando lançamentos de {period}…</div>
-        ) : loadError ? (
-          <div className="ledger-empty">
+        {Array.from(statusErrors, ([id, message]) => <p key={id} role="alert" className="transaction-error">{message}</p>)}
+        {loadError && (
+          <div className={transactions.length ? undefined : 'ledger-empty'}>
+            <p role="alert" className="transaction-error">
+              {loadError}{transactions.length > 0 && ' Mostrando os últimos dados carregados.'}
+            </p>
             <Button variant="outline" size="sm" aria-disabled={isLoading || undefined} onClick={async (event) => {
               if (isLoading) return;
               restoreLedgerFocus.current = document.activeElement === event.currentTarget;
               await fetchTransactions();
             }}>Tentar carregar {period} novamente</Button>
           </div>
-        ) : visibleTransactions.length === 0 ? (
+        )}
+        {!hasMonthData && !loadError && (
+          <div className="ledger-empty">Carregando lançamentos de {period}…</div>
+        )}
+        {hasMonthData && (!loadError || transactions.length > 0) && (visibleTransactions.length === 0 ? (
           <div className="ledger-empty">
             <Layers size={26} strokeWidth={1.5} aria-hidden="true" />
             <p className="empty-title">{transactions.length ? 'Nenhum lançamento com estes filtros.' : 'Nenhum lançamento em ' + period + '.'}</p>
@@ -320,9 +351,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ entryNotice, onProfileSwit
               const status = paid ? (income ? 'Recebido' : 'Pago') : overdue ? 'Vencido' : 'Pendente';
               const action = paid ? (income ? 'Marcar como a receber' : 'Marcar como pendente') : income ? 'Marcar como recebido' : 'Marcar como pago';
               const StatusIcon = paid ? CheckCircle2 : overdue ? AlertCircle : Clock;
+              const operation = pendingRows.get(tx.id);
 
               return (
-                <tr key={tx.id} className="ledger-row" role="row">
+                <tr key={tx.id} className="ledger-row" role="row" tabIndex={-1}
+                  ref={tx.id === transactionTarget ? targetRow : undefined}>
                   <th role="rowheader" scope="row" className="tx-description">
                     <strong>{tx.description}</strong>
                     <small>{income ? 'Receita' : 'Despesa'} · {CATEGORY_TRANSLATIONS[tx.category] || tx.category}
@@ -335,28 +368,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ entryNotice, onProfileSwit
                   <td role="cell" className="tx-state">
                     <button className={'settle-button ' + (paid ? 'paid' : overdue ? 'overdue' : '')}
                       title={action} aria-label={status + ' — ' + action + ' — ' + tx.description}
-                      aria-disabled={isLoading || undefined} onClick={async (event) => {
-                        if (isLoading) return;
-                        const hadFocus = document.activeElement === event.currentTarget;
-                        const nextStatus = paid ? 'pending' : 'paid';
-                        setStatusError('');
-                        setSavedNotice('');
-                        try {
-                          await toggleTransactionStatus(tx.id, nextStatus);
-                          restoreLedgerFocus.current = hadFocus;
-                          setSavedNotice(tx.description + ': ' + (paid ? 'situação voltou a ficar em aberto' : income ? 'marcado como recebido' : 'marcado como pago') + '.');
-                        } catch {
-                          setStatusError('Falha ao alterar a situação de ' + tx.description + '. Tente novamente.');
-                        }
-                      }}>
-                      <StatusIcon size={15} aria-hidden="true" />{status}
+                      aria-busy={operation === 'status' || undefined} aria-disabled={Boolean(operation) || undefined}
+                      onClick={(event) => void changeStatus(event, tx)}>
+                      <StatusIcon size={15} aria-hidden="true" />{operation === 'status' ? 'Alterando…' : status}
                     </button>
                   </td>
                   <td role="cell" className={income ? 'tx-amount income' : 'tx-amount'}>{income ? '+' : '−'} {formatCurrency(tx.amount || 0)}</td>
                   <td role="cell" className="tx-actions">
                     <Button size="sm" variant="ghost" aria-label={'Editar ' + tx.description} title="Editar lançamento"
-                      onClick={(event) => openEditor(event, { type: tx.type, transaction: tx })}><Pencil size={15} aria-hidden="true" /></Button>
+                      disabled={Boolean(operation)} onClick={(event) => openEditor(event, { type: tx.type, transaction: tx })}><Pencil size={15} aria-hidden="true" /></Button>
                     <Button size="sm" variant="ghost" aria-label={'Excluir ' + tx.description} title="Excluir lançamento"
+                      disabled={Boolean(operation)}
                       onClick={(event) => {
                         event.currentTarget.focus();
                         setSavedNotice('');
@@ -368,13 +390,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ entryNotice, onProfileSwit
               );
             })}</tbody>
           </table>
-        )}
-        <p className={hasMonthData && transactions.length ? 'ledger-count' : 'sr-only'} role="status">
-          {hasMonthData ? (
+        ))}
+        <p className={hasMonthData && transactions.length && !loadError ? 'ledger-count' : 'sr-only'} role="status">
+          {isLoading ? (
+            hasMonthData ? 'Atualizando lançamentos de ' + period + '.' : 'Carregando lançamentos de ' + period + '.'
+          ) : hasMonthData && !loadError ? (
             transactions.length
               ? visibleTransactions.length + ' de ' + transactions.length + ' lançamentos em ' + period + (visibleTransactions.length ? '.' : '. Nenhum lançamento com estes filtros.')
               : 'Nenhum lançamento em ' + period + '.'
-          ) : isLoading || !loadError ? 'Carregando lançamentos de ' + period + '.' : ''}
+          ) : ''}
         </p>
       </section>
 

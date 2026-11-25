@@ -13,6 +13,7 @@
     "dev:api": "npm run dev -w @organizador/api",
     "dev:web": "npm run dev -w @organizador/web",
     "dev:shared": "npm run dev -w @organizador/shared",
+    "test": "npm run build -w @organizador/shared && npm run build -w @organizador/api && node --test tests/financial-rules.test.cjs",
     "build": "npm run build --workspaces --if-present",
     "clean": "npm run clean --workspaces --if-present"
   },
