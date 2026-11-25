@@ -5,7 +5,7 @@ import { firstFutureMonth, formatDate, monthLabel, shiftMonth } from '../calenda
 import { formatCurrency, formatCurrencyCents } from '../components/MonthlySummary';
 import { NotebookHeader } from '../components/NotebookHeader';
 import { ProfileSecurityActions } from '../components/ProfilePin';
-import { NotebookViews } from '../components/NotebookViews';
+import { NotebookViews, type NotebookView } from '../components/NotebookViews';
 import { Button, Select } from '../components/ui';
 import { useProfiles, useTransactions } from '../contexts';
 import { COMMITMENT_CATEGORIES, summarizeCommitments, type CommitmentCategory } from '../futureCommitments';
@@ -26,11 +26,11 @@ function installmentLabel(tx: Transaction) {
 type FutureCommitmentsProps = {
   month: string;
   onMonthChange: (month: string) => void;
-  onStatement: () => void;
+  onViewChange: (view: NotebookView) => void;
   onOpenTransaction: (tx: Transaction) => void;
 };
 
-export function FutureCommitments({ onStatement, ...monthProps }: FutureCommitmentsProps) {
+export function FutureCommitments({ onViewChange, ...monthProps }: FutureCommitmentsProps) {
   const { activeProfile, profiles, selectProfile } = useProfiles();
   const heading = useRef<HTMLHeadingElement>(null);
 
@@ -51,7 +51,7 @@ export function FutureCommitments({ onStatement, ...monthProps }: FutureCommitme
         </div>
         <ProfileSecurityActions />
       </NotebookHeader>
-      <NotebookViews current="future" onChange={onStatement} />
+      <NotebookViews current="future" onChange={onViewChange} />
 
       <header className="commitments-heading">
         <h1 ref={heading} tabIndex={-1}>Compromissos futuros</h1>
@@ -64,7 +64,7 @@ export function FutureCommitments({ onStatement, ...monthProps }: FutureCommitme
 }
 
 function FutureMonth({ profileId, month, onMonthChange, onOpenTransaction }:
-  Omit<FutureCommitmentsProps, 'onStatement'> & { profileId: string }) {
+  Omit<FutureCommitmentsProps, 'onViewChange'> & { profileId: string }) {
   const firstMonth = firstFutureMonth();
   const selectedMonth = month < firstMonth ? firstMonth : month;
   const { pendingRows } = useTransactions();

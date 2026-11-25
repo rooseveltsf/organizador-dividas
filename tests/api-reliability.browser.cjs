@@ -386,6 +386,132 @@ test('compromissos futuros no celular preservam o mês ao trocar de perfil e loc
   await visible('Sem vínculo com uma série');
 });
 
+test('simulação mensal destaca o déficit, recalcula as parcelas e abre evidências no Extrato', { timeout: 45000 }, async t => {
+  const rows = [650, 850, 400].flatMap((amount, index) => {
+    const date = '2028-0' + (index + 1) + '-05';
+    const status = index === 0 ? 'paid' : 'pending';
+    return [{ id: `income-${index}`, description: 'Receita', type: 'income', amount: 1000, date, status },
+      { id: `expense-${index}`, description: 'Despesa', type: 'expense', amount, date, status }];
+  }).map(row => ({ ...row, profileId: 'alfa', category: 'daily' }));
+  rows.push(...[
+    { id: 'rent-1', description: 'Aluguel', date: '2028-01-31', category: 'fixed', groupId: 'aluguel', amount: 100 },
+    { id: 'rent-2', description: 'Aluguel', date: '2028-02-29', category: 'fixed', groupId: 'aluguel', amount: 100 },
+    { id: 'loan-1', date: '2028-01-05', currentInstallment: 1, status: 'paid', paymentDate: '2028-01-05' },
+    { id: 'loan-2', date: '2028-02-21', currentInstallment: 2 },
+  ].map(row => ({ profileId: 'beta', type: 'expense', status: 'pending', description: 'Financiamento',
+    groupId: 'dívida', category: 'installment', totalInstallments: 2, amount: 600, ...row })));
+  const reads = [];
+  const api = createServer((request, response) => {
+    const url = new URL(request.url, 'http://localhost');
+    const json = data => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ success: true, data }));
+    };
+    if (url.pathname === '/api/profiles') return json(profiles);
+    if (openMockProfile(url.pathname)) return json({ profile: openMockProfile(url.pathname) });
+    if (url.pathname === '/api/transactions') {
+      const { searchParams: query } = url;
+      reads.push({ method: request.method, query: Object.fromEntries(query) });
+      const matches = rows.filter(row => row.profileId === query.get('profileId'));
+      if (!query.has('month')) return json(matches);
+      const month = query.get('year') + '-' + query.get('month').padStart(2, '0');
+      return json(matches.filter(row => row.date.startsWith(month)));
+    }
+    response.writeHead(404).end();
+  });
+  const webUrl = await previewWeb(t, api);
+  const { send, evaluate } = await browserPage(t);
+  await send('Page.enable');
+  await send('Emulation.setDeviceMetricsOverride', { width: 320, height: 740, deviceScaleFactor: 1, mobile: true });
+  await send('Emulation.setTimezoneOverride', { timezoneId: 'America/Fortaleza' });
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: `{
+    const actualDate = window.Date;
+    window.Date = class extends actualDate {
+      constructor(...args) { super(...(args.length ? args : ['2028-01-15T12:00:00Z'])); }
+      static now() { return actualDate.parse('2028-01-15T12:00:00Z'); }
+    };
+  }` });
+  await send('Page.navigate', { url: webUrl });
+  const click = async label => {
+    const button = `[...document.querySelectorAll('button')].find(button =>
+      (button.ariaLabel === ${JSON.stringify(label)} || button.textContent.trim() === ${JSON.stringify(label)}) && !button.disabled)`;
+    await waitFor(() => evaluate('Boolean(' + button + ')'), label);
+    await evaluate(button + '.click()');
+  };
+  const input = (name, value) => evaluate(`(() => {
+    const element = document.querySelector('.purchase-form').elements.namedItem(${JSON.stringify(name)});
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, ${JSON.stringify(value)});
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  const select = (selector, value) => evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    element.value = ${JSON.stringify(value)};
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  const monthValues = month => evaluate(`Array.from(document.querySelectorAll('[data-month="${month}"] td'), item => item.textContent)`);
+
+  await click('Entrar no perfil Alfa');
+  await click('Simular compra');
+  assert.equal(await evaluate(`document.querySelector('[name="paymentDate"]').value`), '2028-01-15');
+  await select('select[name="payment"]', 'installments');
+  await input('count', '6');
+  await input('firstDue', '2028-01-31');
+  await input('total', '1200');
+  await waitFor(() => evaluate(`Boolean(document.querySelector('.purchase-highlight'))`), 'projeção mensal');
+  assert.match((await monthValues('2028-01')).at(-1), /150,00/);
+  assert.match((await monthValues('2028-02')).at(-1), /-.*50,00/);
+  assert.match((await monthValues('2028-03')).at(-1), /400,00/);
+  assert.match((await monthValues('2028-06'))[2], /200,00.*30\/06\/2028/);
+  const highlight = () => evaluate(`document.querySelector('.purchase-highlight').textContent`);
+  assert.match(await highlight(), /Mês mais apertado · Fevereiro de 2028.*Faltariam R\$\s*50,00/);
+  assert.match(await highlight(), /Análise incompleta/);
+  assert.match(await evaluate(`document.querySelector('.purchase-settled').textContent`), /Recebido R\$\s*1\.000,00Pago R\$\s*650,00/);
+  assert.equal(await evaluate('document.documentElement.scrollWidth'), 320);
+
+  await input('count', '4');
+  assert.match((await monthValues('2028-01'))[2], /300,00/);
+  await input('firstDue', '2028-02-29');
+  assert.match((await monthValues('2028-02'))[2], /300,00.*29\/02\/2028/);
+  assert.match((await monthValues('2028-03'))[2], /29\/03\/2028/);
+  await input('margin', '350');
+  assert.match((await monthValues('2028-03')).at(-1), /Abaixo da margem/);
+
+  await select('select[aria-label="Perfil"]', 'beta');
+  await waitFor(() => reads.some(({ query }) => query.profileId === 'beta' && !query.month), 'consulta de simulação para Beta');
+  assert.equal(await evaluate(`document.querySelector('input[name="total"]').value`), '');
+  assert.deepEqual(await monthValues('2028-01'), []);
+  assert.deepEqual(reads.filter(({ query }) => !query.month), [
+    { method: 'GET', query: { profileId: 'alfa' } }, { method: 'GET', query: { profileId: 'beta' } },
+  ]);
+
+  await input('total', '100');
+  await waitFor(() => evaluate(`Boolean(document.querySelector('.purchase-series'))`), 'explicações de Beta');
+  assert.match((await monthValues('2028-01'))[2], /100,00.*15\/01\/2028/);
+  const seriesText = () => evaluate(`document.querySelector('.purchase-series').innerText`);
+  assert.match(await seriesText(), /Última parcela identificada \(2\/2\)/);
+  assert.match(await seriesText(), /Fim previsto em 21\/02\/2028/);
+  assert.match(await seriesText(), /A partir de Março de 2028/);
+  assert.match(await seriesText(), /A projeção cadastrada acabou/);
+
+  await evaluate(`document.querySelectorAll('.purchase-form details').forEach(details => details.open = true)`);
+  await select('select[aria-label="Premissa na simulação · Aluguel"]', 'continue');
+  assert.match((await monthValues('2028-03'))[1], /100,00 de premissas/);
+  assert.match(await seriesText(), /Continuidade assumida/);
+
+  await select('select[aria-label="Premissa na simulação · Aluguel"]', 'end');
+  await evaluate(`(() => {
+    const element = document.querySelector('input[aria-label="Data de fim · Aluguel"]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, '2028-02-29');
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  assert.match(await seriesText(), /Fim confirmado para 29\/02\/2028/);
+  assert.equal(await evaluate('document.documentElement.scrollWidth'), 320);
+  await evaluate(`[...document.querySelectorAll('.purchase-series details')].find(details => details.textContent.includes('dívida')).open = true`);
+  await click('Ver no extrato · Financiamento · 21/02/2028 · parcela 2');
+  await waitFor(() => evaluate(`document.activeElement.matches('.ledger-row')
+    && document.activeElement.textContent.includes('Financiamento')`), 'parcela da simulação no Extrato');
+});
+
 test('PIN no navegador isola trocas rápidas, restauração, expiração e bloqueio com SQLite temporário', { timeout: 45000 }, async t => {
   let cleanDatabase, prisma;
   t.after(async () => {

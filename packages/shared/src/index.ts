@@ -4,13 +4,19 @@
  */
 
 import { z } from 'zod';
-import { addMonths, parseCalendarDate } from './calendar';
+import { addMonths, MAX_SERIES_LENGTH, parseCalendarDate } from './calendar';
 import { toCents, validMoneyCents } from './money';
 
-export { addMonths, calendarDay, calendarMonthRange, parseCalendarDate } from './calendar';
+export { addMonths, calendarDay, calendarMonthRange, MAX_SERIES_LENGTH, parseCalendarDate } from './calendar';
 export { installmentCents, toCents, validMoneyCents } from './money';
+export { simulatePurchase } from './purchaseSimulation';
+export type { IncomeAssumption, PurchaseFlow, PurchaseOutcome, PurchaseScenario, PurchaseSimulation,
+  PurchaseSimulationInput, PurchaseTransaction } from './purchaseSimulation';
+export { collectPurchaseSeries } from './purchaseSeries';
+export type { PurchaseSeries, PurchaseSeriesSummary, RecurrenceAssumption } from './purchaseSeries';
 
-export const MAX_SERIES_LENGTH = 120;
+export { simulateMonthlyPurchase } from './monthlyPurchase';
+export type { MonthlyPurchase, MonthlyPurchaseRow } from './monthlyPurchase';
 
 // ============================================================================
 // Tipos Fundamentais de Transação

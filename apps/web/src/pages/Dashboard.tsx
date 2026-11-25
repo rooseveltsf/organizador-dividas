@@ -5,7 +5,7 @@ import { Button, emptyPin, Modal, PinField } from '../components/ui';
 import { MonthlySummary, formatCurrency } from '../components/MonthlySummary';
 import { NotebookHeader } from '../components/NotebookHeader';
 import { ProfileSecurityActions } from '../components/ProfilePin';
-import { NotebookViews } from '../components/NotebookViews';
+import { NotebookViews, type NotebookView } from '../components/NotebookViews';
 import { TransactionForm } from '../components/TransactionForm';
 import { PayslipImportModal } from '../components/PayslipImportModal';
 import { formatDate, MONTH_NAMES } from '../calendar';
@@ -88,13 +88,13 @@ interface DashboardProps {
   entryNotice: string;
   onProfileSwitch: () => void;
   onProfileDeleted: (name: string) => void;
-  onFutureCommitments: () => void;
+  onViewChange: (view: NotebookView) => void;
   transactionTarget: string | null;
   onTransactionLocated: () => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({
-  entryNotice, onProfileSwitch, onProfileDeleted, onFutureCommitments, transactionTarget, onTransactionLocated,
+  entryNotice, onProfileSwitch, onProfileDeleted, onViewChange, transactionTarget, onTransactionLocated,
 }) => {
   const { activeProfile, selectProfile, deleteProfile } = useProfiles();
   const {
@@ -259,7 +259,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           setIsDeleteProfileModalOpen(true);
         }} aria-label={'Excluir perfil ' + activeProfile?.name} title="Excluir perfil ativo"><Trash2 size={15} aria-hidden="true" /></button>
       </NotebookHeader>
-      <NotebookViews current="statement" onChange={onFutureCommitments} />
+      <NotebookViews current="statement" onChange={onViewChange} />
 
       <header className="month-header">
         <div className="month-nav">

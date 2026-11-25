@@ -21,3 +21,7 @@ export function formatDate(date: string): string {
   const parts = date.split('T')[0].split('-');
   return parts.length === 3 ? parts.reverse().join('/') : date;
 }
+
+export function formatPeriod(period: string): string {
+  return period.length === 7 ? monthLabel(period) : formatDate(period);
+}

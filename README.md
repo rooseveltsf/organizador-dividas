@@ -130,6 +130,14 @@ A visão abre no próximo mês civil. Escolha o perfil e navegue entre os meses.
 - A numeração da parcela vem de `currentInstallment` e `totalInstallments`. O valor e a quantidade de parcelas restantes consideram os registros em aberto com o mesmo `groupId` e perfil, cuja data de vencimento esteja em um mês posterior ao exibido. Um lançamento sem `groupId` aparece sem vínculo de série.
 - A consulta usa `profileId`, `type=expense` e `startDate` no primeiro dia do próximo mês. Cada cálculo usa as datas, categorias, valores e situações atualmente gravadas, inclusive após edições ou exclusões individuais. O horizonte termina nos registros cadastrados.
 
+### 6. Simular compra
+
+Informe o total real da oferta, a forma de pagamento e as datas da compra. O nome é opcional. A simulação consulta os lançamentos do perfil e atualiza a comparação mensal no navegador, sem gravar lançamentos.
+
+- A tabela começa no mês atual e cobre três meses ou até o último vencimento, se ele for posterior. A sobra mensal projetada usa receitas menos despesas previstas, agrupadas pelo mês do lançamento como no Extrato. As liquidações aparecem em detalhes separados.
+- O parcelamento segue a distribuição de centavos e o calendário do cadastro. A tela destaca o menor resultado, o primeiro mês negativo e os valores abaixo de uma margem opcional. Quando faltam dados no horizonte, os destaques priorizam os meses com cobertura.
+- A seção de encerramentos mostra quando parcelas conhecidas deixam de pesar na projeção e permite consultar os registros no Extrato. O fim dos lançamentos de uma recorrência sinaliza cobertura insuficiente nos meses seguintes. As premissas opcionais de fim ou continuidade aparecem separadas dos valores cadastrados.
+
 ---
 
 ## 📁 Estrutura de Diretórios
