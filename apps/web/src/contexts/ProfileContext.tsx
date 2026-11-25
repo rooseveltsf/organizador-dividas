@@ -53,6 +53,7 @@ export interface ProfileContextData {
   profiles: Profile[];
   activeProfile: Profile | null;
   isLoading: boolean;
+  profileListStatus: 'loading' | 'ready' | 'error';
   selectProfile: (profile: Profile | null) => void;
   fetchProfiles: () => Promise<void>;
   createProfile: (data: CreateProfileDTO) => Promise<Profile>;
@@ -70,6 +71,8 @@ export const ProfileProvider: React.FC<ProfileProviderProps> = ({ children }) =>
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeProfile, setActiveProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  const [profileListStatus, setProfileListStatus] = useState<ProfileContextData['profileListStatus']>('loading');
 
   // Efeito dinâmico que injeta as variáveis CSS globais no :root do documento
   useEffect(() => {
@@ -106,6 +109,7 @@ export const ProfileProvider: React.FC<ProfileProviderProps> = ({ children }) =>
   }, []);
 
   const fetchProfiles = useCallback(async () => {
+    setProfileListStatus('loading');
     setIsLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/profiles`);
@@ -115,6 +119,7 @@ export const ProfileProvider: React.FC<ProfileProviderProps> = ({ children }) =>
       const result: ApiResponse<Profile[]> = await response.json();
       if (result.success && Array.isArray(result.data)) {
         setProfiles(result.data);
+        setProfileListStatus('ready');
 
         // Restaura perfil ativo salvo anteriormente se existente
         const savedId = localStorage.getItem(STORAGE_KEY);
@@ -125,9 +130,10 @@ export const ProfileProvider: React.FC<ProfileProviderProps> = ({ children }) =>
           }
         }
       } else {
-        setProfiles([]);
+        setProfileListStatus('error');
       }
     } catch (error) {
+      setProfileListStatus('error');
       console.error('Erro ao carregar perfis:', error);
     } finally {
       setIsLoading(false);
@@ -238,6 +244,7 @@ export const ProfileProvider: React.FC<ProfileProviderProps> = ({ children }) =>
         activeProfile,
         isLoading,
         selectProfile,
+        profileListStatus,
         fetchProfiles,
         createProfile,
         updateProfile,

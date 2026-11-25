@@ -14,7 +14,7 @@ const inputRecipe = cva({
     outline: 'none',
     transition: 'background-color 150ms, border-color 150ms, color 150ms',
     _placeholder: {
-      color: 'slate.400',
+      color: 'slate.500',
     },
     _disabled: {
       backgroundColor: 'slate.50',
@@ -76,6 +76,7 @@ export type InputVariants = RecipeVariantProps<typeof inputRecipe>;
 export type InputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size'> &
   InputVariants & {
     errorMessage?: string;
+    hint?: string;
     label?: string;
   };
 
@@ -94,15 +95,18 @@ const inputLabelStyle = css({
 
 const inputErrorMessageStyle = css({
   fontSize: 'xs',
-  color: 'expense.500',
+  color: 'expense.700',
   fontWeight: 'medium',
 });
 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, hasError, size, errorMessage, label, id, ...props }, ref) => {
-    const isError = Boolean(hasError || errorMessage);
+  ({ className, hasError, size, errorMessage, hint, label, id,
+    'aria-describedby': describedBy, 'aria-invalid': invalid, ...props }, ref) => {
+    const isError = Boolean(hasError || errorMessage || (invalid && invalid !== 'false'));
     const autoId = React.useId();
     const inputId = id || autoId;
+    const descriptions = [describedBy, hint && `${inputId}-hint`, errorMessage && `${inputId}-error`]
+      .filter(Boolean).join(' ') || undefined;
 
     return (
       <div className={inputContainerStyle}>
@@ -115,12 +119,13 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           ref={ref}
           id={inputId}
           className={cx(inputRecipe({ hasError: isError, size }), className)}
-          aria-invalid={isError ? true : undefined}
-          aria-errormessage={isError && errorMessage ? `${inputId}-error` : undefined}
+          aria-invalid={hasError || errorMessage ? true : invalid}
+          aria-describedby={descriptions}
           {...props}
         />
+        {hint && <p id={`${inputId}-hint`} className="field-hint">{hint}</p>}
         {errorMessage && (
-          <span id={`${inputId}-error`} role="alert" className={inputErrorMessageStyle}>
+          <span id={`${inputId}-error`} className={inputErrorMessageStyle}>
             {errorMessage}
           </span>
         )}

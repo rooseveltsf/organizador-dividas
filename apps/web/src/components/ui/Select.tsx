@@ -106,7 +106,7 @@ const chevronIconStyle = css({
   position: 'absolute',
   right: '3',
   pointerEvents: 'none',
-  color: 'slate.400',
+  color: 'slate.600',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -114,15 +114,17 @@ const chevronIconStyle = css({
 
 const selectErrorMessageStyle = css({
   fontSize: 'xs',
-  color: 'expense.500',
+  color: 'expense.700',
   fontWeight: 'medium',
 });
 
 export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
-  ({ className, hasError, size, errorMessage, label, id, children, disabled, ...props }, ref) => {
-    const isError = Boolean(hasError || errorMessage);
+  ({ className, hasError, size, errorMessage, label, id, children, disabled,
+    'aria-describedby': describedBy, 'aria-invalid': invalid, ...props }, ref) => {
+    const isError = Boolean(hasError || errorMessage || (invalid && invalid !== 'false'));
     const autoId = React.useId();
     const selectId = id || autoId;
+    const descriptions = [describedBy, errorMessage && `${selectId}-error`].filter(Boolean).join(' ') || undefined;
 
     return (
       <div className={selectContainerStyle}>
@@ -137,8 +139,8 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
             id={selectId}
             disabled={disabled}
             className={cx(selectRecipe({ hasError: isError, size }), className)}
-            aria-invalid={isError ? true : undefined}
-            aria-errormessage={isError && errorMessage ? `${selectId}-error` : undefined}
+            aria-invalid={hasError || errorMessage ? true : invalid}
+            aria-describedby={descriptions}
             {...props}
           >
             {children}
@@ -159,7 +161,7 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           </div>
         </div>
         {errorMessage && (
-          <span id={`${selectId}-error`} role="alert" className={selectErrorMessageStyle}>
+          <span id={`${selectId}-error`} className={selectErrorMessageStyle}>
             {errorMessage}
           </span>
         )}

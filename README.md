@@ -21,6 +21,7 @@
   - [Scripts Disponíveis](#scripts-disponíveis)
 - [Rotas da API REST](#-rotas-da-api-rest)
 - [Design System & Estilização (Panda CSS)](#-design-system--estilização-panda-css)
+- [Acessibilidade do frontend](#acessibilidade-do-frontend)
 - [Licença](#-licença)
 
 ---
@@ -273,8 +274,29 @@ A aplicação web utiliza o **Panda CSS** para compilar estilos type-safe direta
   - `expense`: Tons vermelhos para saídas, dívidas e deduções (`expense.50` a `expense.700`).
   - `warning`: Tons âmbar para parcelamentos e alertas.
   - `slate`: Tons neutros modernos para superfícies, bordas e tipografia.
-- **Variáveis Dinâmicas de Perfil:** Os tokens `brand.primary`, `brand.primaryHover`, `brand.primarySoft` e `brand.secondary` mapeiam dinamicamente para as variáveis CSS da sessão ativa, garantindo identidade visual sem reprocessamento de CSS.
+- **Cores de perfil.** As cores personalizadas aparecem nos monogramas e nas amostras de paleta. O texto do monograma usa preto ou branco conforme a luminância do fundo. Botões, bordas, mensagens e indicadores de foco usam a paleta da interface.
 - **Zero Runtime:** Não há injeção de CSS em runtime via JavaScript, proporcionando renderização suave e sem recálculos de layout (*jank*).
+
+---
+
+## Acessibilidade do frontend
+
+### Verificações realizadas
+
+- O build de produção do frontend passou com `npm run build -w @organizador/web`. Os fluxos abaixo foram exercitados no Edge (Chromium), com respostas simuladas da API, teclado automatizado e inspeção da árvore de acessibilidade.
+- Na seleção de perfis, foram exercitados carregamento, erro com nova tentativa, busca sem resultados, criação com erro e sucesso, entrada, troca de perfil e exclusão. As amostras de cor testadas incluíram capas branca, cinza e escura com código hexadecimal abreviado.
+- No painel, foram exercitados troca de mês, carregamento, erro e repetição da consulta, mês vazio, filtros sem resultados, situação de um lançamento e destino do foco quando a linha deixa de aparecer. A tabela manteve papéis e cabeçalhos na árvore de acessibilidade em tela estreita.
+- Nos diálogos, foram verificados nome, foco inicial, Tab e Shift+Tab, Escape, bloqueio de rolagem da página e retorno do foco. No formulário, foram exercitados campos inválidos, associação das mensagens de erro, inclusão e edição. Na exclusão, foram exercitados cancelamento, erro, sucesso, solicitação de exclusão das parcelas futuras e retorno ao título do extrato quando o botão de origem desaparece.
+- Na importação simulada, foram exercitados arquivo inválido, erro de leitura e nova tentativa, conferência, alternância entre documento e revisão, inclusão e remoção de rubrica, erros associados aos campos, erro no envio, conclusão e retorno do foco. O link para abrir o PDF em outra aba foi verificado na árvore de acessibilidade. A extração do PDF foi simulada.
+- Em uma janela de 320 × 568 CSS px, foram verificados rolagem do formulário longo, visibilidade do foco e ausência de rolagem horizontal no formulário. Também foi verificada a rolagem da confirmação de importação a 320 × 260 CSS px. Com a preferência de movimento reduzido emulada, a animação do diálogo ficou praticamente instantânea.
+- Para as combinações de cores verificadas, textos normais ficaram acima de 4,5:1 e bordas de campos e foco, acima de 3:1. A escolha entre preto e branco garante pelo menos 4,58:1 para o texto do monograma sobre qualquer cor hexadecimal válida.
+
+### Validação com tecnologias assistivas
+
+- Percorrer os fluxos com NVDA no Windows, VoiceOver no Safari para iOS ou macOS e TalkBack no Android. Conferir a fala de título e descrição dos diálogos, os campos obrigatórios e inválidos, os anúncios de carregamento e resultado e a navegação dos cabeçalhos das tabelas.
+- Verificar o seletor nativo de cores, a escolha de arquivo e a leitura do PDF em outra aba com leitor de tela e teclado. Conferir também toque, ampliação e cores forçadas em dispositivos reais.
+
+Os diálogos usam o padrão modal nativo e as mensagens de estado usam regiões de anúncio conforme a urgência. [Padrão de diálogo modal do WAI-ARIA APG](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/) e [WCAG 2.2 sobre mensagens de estado](https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html).
 
 ---
 

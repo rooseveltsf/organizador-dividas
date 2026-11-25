@@ -1,586 +1,196 @@
-import React, { useState, useEffect } from 'react';
+import React, { useId, useState } from 'react';
+import { flushSync } from 'react-dom';
+import type { Transaction, TransactionCategory, TransactionType } from '@organizador/shared';
 import { useTransactions } from '../contexts/TransactionContext';
 import { Button, Input, Select } from './ui';
-import type {
-  Transaction,
-  TransactionType,
-  TransactionCategory,
-  CreateTransactionDTO,
-  UpdateTransactionDTO,
-} from '@organizador/shared';
-import { css } from '@/styled-system/css';
-import { Calculator, PlusCircle, Check, AlertCircle, RotateCcw, CreditCard } from 'lucide-react';
+import { formatCurrency } from './MonthlySummary';
 
 export interface TransactionFormProps {
   initialData?: Transaction;
   fixedType?: TransactionType;
   onSuccess?: () => void;
   onCancel?: () => void;
+  onSavingChange?: (saving: boolean) => void;
 }
 
-// Estilos Panda CSS para substituir todos os inline styles
-const formStyle = css({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '4',
-});
+const categories = {
+  daily: ['Cotidiana', 'Uma movimentação avulsa, como uma compra de mercado ou um trabalho extra.'],
+  fixed: ['Fixa', 'Um valor previsto todos os meses, como aluguel ou salário.'],
+  recurring: ['Recorrente', 'Uma cobrança ou entrada que se repete, como uma assinatura.'],
+  installment: ['Parcelada', 'Uma compra dividida em parcelas mensais. A data informada vale para a parcela atual.'],
+} satisfies Record<TransactionCategory, string[]>;
 
-const errorAlertStyle = css({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '2',
-  p: '3',
-  borderRadius: 'lg',
-  backgroundColor: 'expense.50',
-  borderWidth: '1px',
-  borderStyle: 'solid',
-  borderColor: 'expense.200',
-  color: 'expense.700',
-  fontSize: 'sm',
-  animation: 'fadeIn 0.2s ease-out forwards',
-});
+function periodDate(month: number, year: number) {
+  const today = new Date();
+  const day = month === today.getMonth() + 1 && year === today.getFullYear() ? today.getDate() : 1;
+  return [year, String(month).padStart(2, '0'), String(day).padStart(2, '0')].join('-');
+}
 
-const fieldContainerStyle = css({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '1.5',
-});
+function monthlyDate(base: Date, offset: number) {
+  const last = new Date(base.getFullYear(), base.getMonth() + offset + 1, 0, 12);
+  last.setDate(Math.min(last.getDate(), base.getDate()));
+  return last;
+}
 
-const fieldLabelStyle = css({
-  fontSize: 'sm',
-  fontWeight: 'medium',
-  color: 'slate.700',
-});
+function moneyInput(cents: number) {
+  return (cents / 100).toFixed(2).replace('.', ',');
+}
 
-const buttonGroupStyle = css({
-  display: 'flex',
-  gap: '2',
-});
+export function TransactionForm({ initialData, fixedType, onSuccess, onCancel, onSavingChange }: TransactionFormProps) {
+  const { addTransaction, updateTransaction, selectedMonth, selectedYear } = useTransactions();
+  const initialType = fixedType ?? initialData?.type ?? 'expense';
+  const [type, setType] = useState(initialType);
+  const defaultCategory = initialType === 'expense' ? 'installment' : 'fixed';
+  const [category, setCategory] = useState<TransactionCategory>(initialData?.category ?? defaultCategory);
+  const [description, setDescription] = useState(initialData?.description ?? '');
+  const [amount, setAmount] = useState(initialData ? String(initialData.amount).replace('.', ',') : '');
+  const [date, setDate] = useState(() => initialData?.date.split('T')[0] ?? periodDate(selectedMonth, selectedYear));
+  const [byTotal, setByTotal] = useState(false);
+  const [current, setCurrent] = useState(String(initialData?.currentInstallment ?? 1));
+  const [total, setTotal] = useState(String(initialData?.totalInstallments ?? (initialData?.category === 'installment' ? 1 : 2)));
+  const [months, setMonths] = useState('12');
+  const [attempted, setAttempted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [failure, setFailure] = useState('');
+  const helpId = useId();
+  const installment = category === 'installment';
+  const repeats = !initialData && (category === 'fixed' || category === 'recurring');
+  const count = Number(total);
+  const first = Number(current);
+  const monthsCount = Number(months);
+  const cents = Math.round(Number(amount.trim().replace(',', '.')) * 100);
+  const unit = installment && byTotal ? Math.round(cents / count) : cents;
+  const base = new Date(date + 'T12:00:00');
+  const generated = initialData ? 1 : installment ? count - first + 1 : repeats ? monthsCount : 1;
+  const last = monthlyDate(base, generated - 1);
+  const errors: Record<string, string> = {};
+  if (!description.trim()) errors.description = 'Informe a descrição.';
+  if (!/^\d+(?:[.,]\d{1,2})?$/.test(amount.trim()) || !Number.isSafeInteger(cents) || cents <= 0)
+    errors.amount = 'Informe um valor positivo com até duas casas decimais.';
+  else if (installment && byTotal && count > 0 && unit < 1)
+    errors.amount = 'Cada parcela precisa valer pelo menos R$ 0,01.';
+  if (!Number.isFinite(base.getTime())) errors.date = 'Informe uma data válida.';
+  if (installment) {
+    if (!Number.isInteger(count) || count < 1 || count > 120) errors.total = 'Informe um total de 1 a 120 parcelas.';
+    if (!Number.isInteger(first) || first < 1 || first > count) errors.current = 'Informe uma parcela entre 1 e o total de parcelas.';
+  }
+  if (repeats && (!Number.isSafeInteger(monthsCount) || monthsCount < 1 || (!errors.date && !Number.isFinite(last.getTime()))))
+    errors.months = 'Informe uma quantidade inteira de meses com uma data final válida.';
+  const canPreview = !Object.keys(errors).some(key => key !== 'description');
+  const error = (name: string) => attempted ? errors[name] : undefined;
 
-const installmentBoxStyle = css({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '3',
-  p: '4',
-  borderRadius: 'xl',
-  backgroundColor: 'slate.50',
-  borderWidth: '1px',
-  borderStyle: 'solid',
-  borderColor: 'slate.200',
-  animation: 'fadeIn 0.25s ease-out forwards',
-});
-
-const installmentModeContainerStyle = css({
-  flexWrap: 'wrap',
-  display: 'flex',
-  borderRadius: 'lg',
-  backgroundColor: 'slate.100',
-  p: '1',
-  gap: '1',
-});
-
-const installmentGridStyle = css({
-  display: 'grid',
-  gridTemplateColumns: {
-    base: '1fr',
-    sm: 'repeat(2, 1fr)',
-  },
-  gap: '3',
-});
-
-const summaryCardStyle = css({
-  display: 'flex',
-  alignItems: 'flex-start',
-  gap: '2.5',
-  p: '3',
-  borderRadius: 'lg',
-  backgroundColor: 'brand.50',
-  borderWidth: '1px',
-  borderStyle: 'solid',
-  borderColor: 'brand.100',
-  color: 'brand.700',
-  fontSize: 'xs',
-  lineHeight: '1.4',
-});
-
-const summaryIconStyle = css({
-  flexShrink: 0,
-  color: 'brand.600',
-  mt: '0.5',
-});
-
-const summaryStrongStyle = css({
-  fontSize: 'sm',
-  fontWeight: 'bold',
-  color: 'brand.700',
-});
-
-const actionsGroupStyle = css({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '2',
-  mt: '2',
-});
-
-export const TransactionForm: React.FC<TransactionFormProps> = ({
-  initialData,
-  fixedType,
-  onSuccess,
-  onCancel,
-}) => {
-  const { addTransaction, updateTransaction, isLoading } = useTransactions();
-  const isEditing = Boolean(initialData);
-
-  const effectiveType = fixedType || (initialData ? initialData.type : 'expense');
-
-  // Estados fundamentais da transação
-  const [type, setType] = useState<TransactionType>(effectiveType);
-  const [description, setDescription] = useState('');
-  const [category, setCategory] = useState<TransactionCategory>(
-    effectiveType === 'expense' ? 'installment' : 'fixed'
-  );
-  const [amount, setAmount] = useState('');
-  const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  // Estados específicos para categoria 'installment' (parcelamento)
-  const [installmentMode, setInstallmentMode] = useState<'by_installment' | 'by_total'>('by_installment');
-  const [installments, setInstallments] = useState('2');
-  const [currentInstallment, setCurrentInstallment] = useState('1');
-  const [installmentAmount, setInstallmentAmount] = useState('');
-  const [totalAmount, setTotalAmount] = useState('');
-
-  // Sincroniza o estado do formulário sempre que initialData mudar (Modo Edição)
-  useEffect(() => {
-    if (initialData) {
-      setType(initialData.type);
-      setDescription(initialData.description || '');
-      setCategory(initialData.category);
-      setDate(
-        initialData.date
-          ? initialData.date.split('T')[0]
-          : new Date().toISOString().split('T')[0]
-      );
-
-      if (initialData.category === 'installment') {
-        const total = initialData.totalInstallments ? String(initialData.totalInstallments) : '1';
-        const current = initialData.currentInstallment ? String(initialData.currentInstallment) : '1';
-        const instVal = initialData.amount ? String(initialData.amount) : '';
-
-        setInstallments(total);
-        setCurrentInstallment(current);
-        setInstallmentAmount(instVal);
-        const calculatedTotal = (Number(total) * Number(instVal || 0)).toFixed(2);
-        setTotalAmount(calculatedTotal);
-        setInstallmentMode('by_installment');
-      } else {
-        setAmount(initialData.amount ? String(initialData.amount) : '');
-      }
-      setFormError(null);
-    } else if (fixedType) {
-      setType(fixedType);
-      setCategory(fixedType === 'expense' ? 'installment' : 'fixed');
-    }
-  }, [initialData, fixedType]);
-
-  // Cálculos matemáticos em tempo real para parcelamento
-  const parsedInstallments = Math.max(1, parseInt(installments, 10) || 1);
-  const parsedCurrentInstallment = Math.max(1, parseInt(currentInstallment, 10) || 1);
-
-  // Valor unitário de cada parcela conforme o modo de entrada escolhido
-  let calculatedInstallmentAmount = 0;
-  let calculatedTotalDebt = 0;
-
-  if (installmentMode === 'by_installment') {
-    calculatedInstallmentAmount = parseFloat(installmentAmount.replace(',', '.')) || 0;
-    calculatedTotalDebt = parsedInstallments * calculatedInstallmentAmount;
-  } else {
-    calculatedTotalDebt = parseFloat(totalAmount.replace(',', '.')) || 0;
-    calculatedInstallmentAmount =
-      parsedInstallments > 0 ? calculatedTotalDebt / parsedInstallments : 0;
+  function changeMode(next: boolean) {
+    if (next === byTotal) return;
+    if (!errors.amount && !errors.total && amount.trim()) setAmount(moneyInput(next ? cents * count : unit));
+    setByTotal(next);
   }
 
-  // Parcelas restantes a liquidar considerando o andamento atual (ex: 4 de 10)
-  const remainingInstallmentsCount =
-    parsedCurrentInstallment <= parsedInstallments
-      ? parsedInstallments - parsedCurrentInstallment + 1
-      : 1;
-  const remainingTotalDebt = remainingInstallmentsCount * calculatedInstallmentAmount;
+  function changeCategory(next: TransactionCategory) {
+    if (installment && byTotal && next !== 'installment') changeMode(false);
+    setCategory(next);
+  }
 
-  // Alternância suave entre os modos de valor no parcelamento
-  const handleModeChange = (mode: 'by_installment' | 'by_total') => {
-    setInstallmentMode(mode);
-    if (mode === 'by_total' && calculatedInstallmentAmount > 0 && !totalAmount) {
-      setTotalAmount(calculatedTotalDebt.toFixed(2));
-    } else if (mode === 'by_installment' && calculatedTotalDebt > 0 && !installmentAmount) {
-      setInstallmentAmount(calculatedInstallmentAmount.toFixed(2));
-    }
-  };
-
-  const resetForm = () => {
-    setDescription('');
-    setAmount('');
-    setInstallmentAmount('');
-    setTotalAmount('');
-    setInstallments('2');
-    setCurrentInstallment('1');
-    setInstallmentMode('by_installment');
-    if (fixedType) {
-      setType(fixedType);
-      setCategory(fixedType === 'expense' ? 'installment' : 'fixed');
-    }
-    setFormError(null);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError(null);
-
-    if (!description.trim()) {
-      setFormError('Por favor, informe a descrição da transação.');
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (saving) return;
+    setFailure('');
+    if (Object.keys(errors).length) {
+      const invalid = Array.from(event.currentTarget.querySelectorAll('input')).find(field => errors[field.name]);
+      flushSync(() => setAttempted(true));
+      if (invalid && invalid === document.activeElement) {
+        setFailure(errors[invalid.name]);
+      }
+      invalid?.focus();
       return;
     }
-
-    let finalAmount = 0;
-
-    if (category === 'installment') {
-      if (parsedInstallments < 1) {
-        setFormError('A quantidade total de parcelas deve ser de no mínimo 1.');
-        return;
-      }
-
-      if (parsedCurrentInstallment < 1) {
-        setFormError('A parcela atual deve ser no mínimo 1.');
-        return;
-      }
-
-      if (parsedCurrentInstallment > parsedInstallments) {
-        setFormError(
-          `A parcela atual (${parsedCurrentInstallment}) não pode ser maior que o total de parcelas (${parsedInstallments}).`
-        );
-        return;
-      }
-
-      finalAmount = Math.round(calculatedInstallmentAmount * 100) / 100;
-      if (finalAmount <= 0) {
-        setFormError('O valor da parcela deve ser maior que zero.');
-        return;
-      }
-    } else {
-      finalAmount = parseFloat(amount.replace(',', '.')) || 0;
-      if (finalAmount <= 0) {
-        setFormError('O valor deve ser maior que zero.');
-        return;
-      }
-    }
-
+    const fields = {
+      description: description.trim(), amount: unit / 100, type, category, date,
+      ...(installment && { currentInstallment: first, totalInstallments: count }),
+    };
+    setSaving(true);
+    onSavingChange?.(true);
     try {
-      if (isEditing && initialData) {
-        // MODO EDIÇÃO: Atualiza a transação existente
-        const updatePayload: UpdateTransactionDTO = {
-          type,
-          category,
-          description: description.trim(),
-          amount: finalAmount,
-          date,
-          currentInstallment: category === 'installment' ? parsedCurrentInstallment : undefined,
-          totalInstallments: category === 'installment' ? parsedInstallments : undefined,
-        };
-
-        await updateTransaction(initialData.id, updatePayload);
+      if (initialData) {
+        await updateTransaction(initialData.id, {
+          ...fields,
+          ...(initialData.category === 'installment' && !installment && { currentInstallment: null, totalInstallments: null }),
+        });
       } else {
-        // MODO CRIAÇÃO: Adiciona uma nova transação
-        const createPayload: CreateTransactionDTO = {
-          profileId: '',
-          type,
-          category,
-          description: description.trim(),
-          amount: finalAmount,
-          date,
-          currentInstallment: category === 'installment' ? parsedCurrentInstallment : undefined,
-          totalInstallments: category === 'installment' ? parsedInstallments : undefined,
-          status: 'pending',
-        };
-
-        await addTransaction(createPayload);
-        resetForm();
+        await addTransaction({ ...fields, profileId: '', status: 'pending', ...(repeats && { repeatMonths: monthsCount }) });
+        setDescription('');
+        setAmount('');
+        setCurrent('1');
+        setTotal('2');
+        setMonths('12');
+        setByTotal(false);
+        setCategory(defaultCategory);
+        setAttempted(false);
       }
-
-      if (onSuccess) {
-        onSuccess();
-      }
+      onSuccess?.();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Erro ao salvar transação.');
+      setFailure(err instanceof Error ? err.message : 'Falha ao salvar. Tente novamente.');
+    } finally {
+      setSaving(false);
+      onSavingChange?.(false);
     }
-  };
+  }
 
   return (
-    <form onSubmit={handleSubmit} className={formStyle}>
-      {/* Alerta de Validação com Panda CSS */}
-      {formError && (
-        <div className={errorAlertStyle} role="alert">
-          <AlertCircle size={18} className={css({ flexShrink: 0 })} />
-          <span>{formError}</span>
+    <form noValidate onSubmit={submit} className="transaction-form">
+      {initialData && <p className="transaction-scope">A edição altera somente este lançamento, inclusive quando ele faz parte de uma série.</p>}
+      {!fixedType && <Select label="Tipo" value={type} onChange={e => {
+        const next = e.target.value as TransactionType;
+        setType(next);
+        if (next === 'income' && installment) changeCategory('fixed');
+      }}><option value="expense">Despesa</option><option value="income">Receita</option></Select>}
+      <Input label="Descrição" name="description" data-initial-focus required placeholder={type === 'expense' ? 'Ex.: aluguel' : 'Ex.: salário'}
+        value={description} onChange={e => setDescription(e.target.value)} errorMessage={error('description')} />
+      <div className="transaction-pair">
+        <Input label={installment ? (byTotal ? 'Total da compra (R$)' : 'Valor da parcela (R$)') : 'Valor (R$)'}
+          name="amount" inputMode="decimal" hint="Informe até duas casas decimais. Exemplo: 125,50." required value={amount}
+          onChange={e => setAmount(e.target.value)} errorMessage={error('amount')} />
+        <Input label={type === 'income' ? 'Data de recebimento' : 'Data de vencimento'} name="date" type="date"
+          value={date} required onChange={e => setDate(e.target.value)} errorMessage={error('date')} />
+      </div>
+      <div>
+        <Select label="Categoria" value={category} aria-describedby={helpId} onChange={e => changeCategory(e.target.value as TransactionCategory)}>
+          {(Object.keys(categories) as TransactionCategory[]).filter(key => key !== 'installment' || type === 'expense' || installment)
+            .map(key => <option key={key} value={key}>{categories[key][0]}</option>)}
+        </Select>
+        <p className="transaction-help" id={helpId}>{categories[category][1]}</p>
+      </div>
+      {installment && <>
+        <fieldset className="transaction-mode">
+          <legend>Como informar o valor?</legend>
+          <label><input type="radio" name="mode" checked={!byTotal} onChange={() => changeMode(false)} /> Por parcela</label>
+          <label><input type="radio" name="mode" checked={byTotal} onChange={() => changeMode(true)} /> Pela compra inteira</label>
+        </fieldset>
+        <div className="transaction-pair">
+          <Input label="Parcela atual" name="current" type="number" min={1} max={count || undefined} required value={current}
+            onChange={e => setCurrent(e.target.value)} errorMessage={error('current')} />
+          <Input label="Total de parcelas" name="total" type="number" min={1} max={120} required value={total}
+            onChange={e => setTotal(e.target.value)} errorMessage={error('total')} />
         </div>
-      )}
-
-      {/* Tipo de Transação (exibido apenas quando fixedType não for definido) */}
-      {!fixedType && (
-        <div className={fieldContainerStyle}>
-          <label className={fieldLabelStyle}>Tipo de Transação</label>
-          <div className={buttonGroupStyle}>
-            <Button
-              type="button"
-              aria-pressed={type === 'expense'}
-              variant={type === 'expense' ? 'danger' : 'ghost'}
-              onClick={() => {
-                setType('expense');
-                if (category === 'fixed') {
-                  setCategory('installment');
-                }
-              }}
-              className={css({ flex: 1 })}
-            >
-              Despesa
-            </Button>
-            <Button
-              type="button"
-              aria-pressed={type === 'income'}
-              variant={type === 'income' ? 'primary' : 'ghost'}
-              onClick={() => {
-                setType('income');
-                if (category === 'installment') {
-                  setCategory('fixed');
-                }
-              }}
-              className={css({ flex: 1 })}
-            >
-              Receita
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Descrição da Transação */}
-      <Input
-        label="Descrição"
-        placeholder={
-          type === 'income'
-            ? 'Ex: Salário Mensal, Freelance, Rendimentos...'
-            : 'Ex: Compra do Mês, Monitor 4K, Aluguel...'
-        }
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        required
-      />
-
-      {/* Componente Select padronizado para Categoria */}
-      <Select
-        label="Categoria"
-        value={category}
-        onChange={(e) => setCategory(e.target.value as TransactionCategory)}
-      >
-        {type === 'expense' ? (
-          <>
-            <option value="installment">Parcelada (Cartão, Empréstimo, Financiamento)</option>
-            <option value="fixed">Fixa (Aluguel, Internet, Condomínio)</option>
-            <option value="recurring">Recorrente (Streaming, Assinaturas)</option>
-            <option value="daily">Cotidiana / Variável (Alimentação, Lazer, Extra)</option>
-          </>
-        ) : (
-          <>
-            <option value="fixed">Fixa (Salário, Pró-labore, Pensão)</option>
-            <option value="recurring">Recorrente (Rendimentos, Aluguel Recebido)</option>
-            <option value="daily">Cotidiana / Extra (Freelance, Bônus, Vendas)</option>
-          </>
-        )}
-      </Select>
-
-      {/* Bloco Refatorado de Parcelamento */}
-      {category === 'installment' && type === 'expense' ? (
-        <div className={installmentBoxStyle}>
-          {/* Seletor de Modo de Valor: Por Parcela vs Por Valor Total */}
-          <div className={fieldContainerStyle}>
-            <label className={fieldLabelStyle}>Como deseja informar o valor?</label>
-            <div className={installmentModeContainerStyle}>
-              <Button
-                type="button"
-                size="sm"
-                aria-pressed={installmentMode === 'by_installment'}
-                variant={installmentMode === 'by_installment' ? 'primary' : 'ghost'}
-                onClick={() => handleModeChange('by_installment')}
-                className={css({ flex: 1, fontSize: 'xs' })}
-              >
-                Valor da Parcela
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                aria-pressed={installmentMode === 'by_total'}
-                variant={installmentMode === 'by_total' ? 'primary' : 'ghost'}
-                onClick={() => handleModeChange('by_total')}
-                className={css({ flex: 1, fontSize: 'xs' })}
-              >
-                Valor Total da Compra
-              </Button>
-            </div>
-          </div>
-
-          {/* Grid de Inputs de Parcela e Andamento da Dívida */}
-          <div className={installmentGridStyle}>
-            <Input
-              label="Parcela Atual"
-              type="number"
-              min="1"
-              max={installments || '120'}
-              placeholder="Ex: 4"
-              value={currentInstallment}
-              onChange={(e) => setCurrentInstallment(e.target.value)}
-              required
-            />
-
-            <Input
-              label="Total de Parcelas"
-              type="number"
-              min="1"
-              max="120"
-              placeholder="Ex: 10"
-              value={installments}
-              onChange={(e) => setInstallments(e.target.value)}
-              required
-            />
-          </div>
-
-          {/* Input do Valor conforme o modo escolhido */}
-          {installmentMode === 'by_installment' ? (
-            <Input
-              label="Valor de cada Parcela (R$)"
-              type="number"
-              step="0.01"
-              min="0.01"
-              placeholder="0,00"
-              value={installmentAmount}
-              onChange={(e) => setInstallmentAmount(e.target.value)}
-              required
-            />
-          ) : (
-            <Input
-              label="Valor Total da Compra (R$)"
-              type="number"
-              step="0.01"
-              min="0.01"
-              placeholder="0,00"
-              value={totalAmount}
-              onChange={(e) => setTotalAmount(e.target.value)}
-              required
-            />
-          )}
-
-          {/* Helper Card com Cálculo e Resumo em Tempo Real */}
-          <div className={summaryCardStyle}>
-            <Calculator size={18} className={summaryIconStyle} />
-            <div className={css({ display: 'flex', flexDirection: 'column', gap: '0.5' })}>
-              <div>
-                Valor por Parcela:{' '}
-                <strong className={summaryStrongStyle}>
-                  R${' '}
-                  {calculatedInstallmentAmount.toLocaleString('pt-BR', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </strong>{' '}
-                ({parsedInstallments}x de R${' '}
-                {calculatedInstallmentAmount.toLocaleString('pt-BR', {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
-                )
-              </div>
-              <div>
-                Total da Compra:{' '}
-                <strong className={summaryStrongStyle}>
-                  R${' '}
-                  {calculatedTotalDebt.toLocaleString('pt-BR', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </strong>
-              </div>
-              {parsedCurrentInstallment > 1 && (
-                <div className={css({ color: 'brand.600', fontWeight: 'medium', mt: '1' })}>
-                  <CreditCard size={14} className={css({ display: 'inline', mr: '1', verticalAlign: 'text-bottom' })} />
-                  Dívida em andamento: na parcela {parsedCurrentInstallment} de {parsedInstallments}.
-                  Restam <strong>{remainingInstallmentsCount}</strong> parcelas a pagar (R${' '}
-                  {remainingTotalDebt.toLocaleString('pt-BR', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                  ).
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : (
-        /* Input padrão de valor quando não é parcelado */
-        <Input
-          label="Valor (R$)"
-          type="number"
-          step="0.01"
-          min="0.01"
-          placeholder="0,00"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          required
-        />
-      )}
-
-      {/* Data de Vencimento ou Recebimento */}
-      <Input
-        label={type === 'income' ? 'Data de Recebimento' : 'Data de Vencimento / Competência'}
-        type="date"
-        value={date}
-        onChange={(e) => setDate(e.target.value)}
-        required
-      />
-
-      {/* Ações do Formulário */}
-      <div className={actionsGroupStyle}>
-        <Button
-          type="submit"
-          variant="primary"
-          disabled={isLoading}
-          className={css({
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '2',
-          })}
-        >
-          {isEditing ? <Check size={18} /> : <PlusCircle size={18} />}
-          {isLoading
-            ? 'Salvando...'
-            : isEditing
-            ? 'Salvar Alterações'
-            : type === 'income'
-            ? 'Adicionar Receita'
-            : 'Adicionar Dívida'}
-        </Button>
-
-        {isEditing && onCancel && (
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={onCancel}
-            disabled={isLoading}
-            className={css({ display: 'flex', alignItems: 'center', gap: '1.5' })}
-          >
-            <RotateCcw size={16} />
-            Cancelar
-          </Button>
-        )}
+      </>}
+      {repeats && <Input label="Quantidade de meses (inclui o primeiro)" type="number" name="months" required min={1}
+        value={months} onChange={e => setMonths(e.target.value)} errorMessage={error('months')} />}
+      <div className="transaction-preview">
+        <strong>{initialData ? 'Após a alteração' : 'Ao salvar'}</strong>
+        {canPreview ? <>
+          <p>{generated === 1 ? '1 lançamento' : generated + ' lançamentos mensais'} de {formatCurrency(unit / 100)}
+            {generated === 1 ? ' em ' : ' cada, de '}{base.toLocaleDateString('pt-BR')}
+            {generated > 1 && ' até ' + last.toLocaleDateString('pt-BR')}.</p>
+          {installment && <p>{!initialData && generated > 1 ? 'Parcelas ' + first + ' a ' + count : 'Parcela ' + first + ' de ' + count}
+            {' · Total ' + formatCurrency(unit * generated / 100)}</p>}
+          {installment && byTotal && unit * count !== cents && <p>Com o arredondamento por parcela, a compra soma {formatCurrency(unit * count / 100)}.</p>}
+        </> : <p>Preencha os valores e a data para conferir o lançamento.</p>}
+      </div>
+      <p className="transaction-error" role="alert">{failure}</p>
+      <p role="status">{saving ? 'Salvando o lançamento…' : ''}</p>
+      <div className="transaction-actions">
+        <Button type="submit" aria-disabled={saving || undefined}>{initialData ? 'Salvar alterações' : 'Salvar lançamento'}</Button>
+        {onCancel && <Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>Cancelar</Button>}
       </div>
     </form>
   );
-};
+}

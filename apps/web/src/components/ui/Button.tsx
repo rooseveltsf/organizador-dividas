@@ -11,9 +11,7 @@ const buttonRecipe = cva({
     borderRadius: 'lg',
     cursor: 'pointer',
     transition: 'background-color 150ms, border-color 150ms, color 150ms',
-    outline: 'none',
     userSelect: 'none',
-    whiteSpace: 'nowrap',
     _disabled: {
       opacity: '0.6',
       cursor: 'not-allowed',
@@ -38,10 +36,10 @@ const buttonRecipe = cva({
         },
       },
       danger: {
-        bg: 'expense.600',
+        bg: 'expense.700',
         color: 'white',
         _hover: {
-          bg: 'expense.700',
+          bg: 'expense.800',
         },
         _active: {
           bg: 'expense.800',
@@ -66,10 +64,10 @@ const buttonRecipe = cva({
         color: 'slate.700',
         borderWidth: '1px',
         borderStyle: 'solid',
-        borderColor: 'slate.300',
+        borderColor: 'fieldBorder',
         _hover: {
           bg: 'slate.50',
-          borderColor: 'slate.400',
+          borderColor: 'slate.500',
           color: 'slate.900',
         },
         _active: {
@@ -82,19 +80,19 @@ const buttonRecipe = cva({
         fontSize: 'xs',
         px: '3',
         py: '1.5',
-        height: '8',
+        minHeight: '8',
       },
       md: {
         fontSize: 'sm',
         px: '4',
         py: '2',
-        height: '10',
+        minHeight: '10',
       },
       lg: {
         fontSize: 'md',
         px: '6',
         py: '2.5',
-        height: '12',
+        minHeight: '12',
       },
     },
   },
@@ -112,11 +110,12 @@ export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
   };
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ children, variant, size, className, disabled, ...props }, ref) => {
+  ({ children, variant, size, className, disabled, type = 'button', ...props }, ref) => {
     return (
       <button
         ref={ref}
         disabled={disabled}
+        type={type}
         className={`${buttonRecipe({ variant, size })} ${className || ''}`.trim()}
         {...props}
       >

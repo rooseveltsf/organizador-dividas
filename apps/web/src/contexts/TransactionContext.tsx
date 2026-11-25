@@ -1,8 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useLayoutEffect, useRef, useCallback, type ReactNode } from 'react';
 import type {
   Transaction,
   CreateTransactionDTO,
-  UpdateTransactionDTO,
+  UpdateTransactionInput,
   PaymentStatus,
   ApiResponse,
 } from '@organizador/shared';
@@ -12,6 +12,8 @@ const API_BASE_URL = 'http://localhost:3000';
 
 export interface TransactionContextData {
   transactions: Transaction[];
+  hasMonthData: boolean;
+  loadError: string | null;
   isLoading: boolean;
   selectedMonth: number;
   selectedYear: number;
@@ -20,7 +22,7 @@ export interface TransactionContextData {
   setSelectedDate: (month: number, year: number) => void;
   fetchTransactions: (month?: number, year?: number) => Promise<void>;
   addTransaction: (data: CreateTransactionDTO) => Promise<void>;
-  updateTransaction: (id: string, data: UpdateTransactionDTO) => Promise<void>;
+  updateTransaction: (id: string, data: UpdateTransactionInput) => Promise<void>;
   toggleTransactionStatus: (id: string, newStatus?: PaymentStatus) => Promise<void>;
   deleteTransaction: (id: string, deleteAllGroup?: boolean) => Promise<void>;
 }
@@ -36,8 +38,19 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
   const currentDate = new Date();
   const [selectedMonth, setSelectedMonth] = useState<number>(currentDate.getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState<number>(currentDate.getFullYear());
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const periodKey = [activeProfile?.id, selectedYear, selectedMonth].join('/');
+  const currentPeriod = useRef(periodKey);
+  const lastRequest = useRef(0);
+  const [result, setResult] = useState<{ key: string; rows: Transaction[]; error: string | null }>();
+  const hasMonthData = result?.key === periodKey && !result.error;
+  const loadError = result?.key === periodKey ? result.error : null;
+  const transactions = hasMonthData ? result.rows : [];
+
+  const [isLoading, setIsLoading] = useState(false);
+
+  useLayoutEffect(() => {
+    currentPeriod.current = periodKey;
+  }, [periodKey]);
 
   const setSelectedDate = useCallback((month: number, year: number) => {
     setSelectedMonth(month);
@@ -46,13 +59,14 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
 
   const fetchTransactions = useCallback(
     async (month?: number, year?: number) => {
-      if (!activeProfile) {
-        setTransactions([]);
-        return;
-      }
+      if (!activeProfile) return;
 
       const targetMonth = month ?? selectedMonth;
       const targetYear = year ?? selectedYear;
+      const key = [activeProfile.id, targetYear, targetMonth].join('/');
+      if (currentPeriod.current !== key) return;
+      const request = ++lastRequest.current;
+      const isCurrent = () => currentPeriod.current === key && lastRequest.current === request;
 
       setIsLoading(true);
       try {
@@ -68,15 +82,13 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
         }
 
         const result: ApiResponse<Transaction[]> = await response.json();
-        if (result.success && Array.isArray(result.data)) {
-          setTransactions(result.data);
-        } else {
-          setTransactions([]);
-        }
+        if (!result.success || !Array.isArray(result.data)) throw new Error('Resposta de lançamentos inválida.');
+        if (isCurrent()) setResult({ key, rows: result.data, error: null });
       } catch (error) {
         console.error('Erro ao buscar transações na API:', error);
+        if (isCurrent()) setResult({ key, rows: [], error: 'Não foi possível carregar os lançamentos deste mês.' });
       } finally {
-        setIsLoading(false);
+        if (isCurrent()) setIsLoading(false);
       }
     },
     [activeProfile, selectedMonth, selectedYear]
@@ -122,7 +134,7 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
   );
 
   const updateTransaction = useCallback(
-    async (id: string, data: UpdateTransactionDTO) => {
+    async (id: string, data: UpdateTransactionInput) => {
       setIsLoading(true);
       try {
         const response = await fetch(`${API_BASE_URL}/transactions/${id}`, {
@@ -206,8 +218,6 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
   useEffect(() => {
     if (activeProfile) {
       fetchTransactions(selectedMonth, selectedYear);
-    } else {
-      setTransactions([]);
     }
   }, [activeProfile?.id, selectedMonth, selectedYear, fetchTransactions]);
 
@@ -215,6 +225,8 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
     <TransactionContext.Provider
       value={{
         transactions,
+        hasMonthData,
+        loadError,
         isLoading,
         selectedMonth,
         selectedYear,
