@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import { css, cx } from '@/styled-system/css';
 import { X } from 'lucide-react';
+import { useGuideScene } from '../../tutorial/GuideContext';
 
 interface ModalContentProps {
   isOpen: boolean;
@@ -110,7 +111,32 @@ type ModalLayerProps = React.ComponentPropsWithoutRef<'dialog'> & { onDismiss: (
 
 const tabStops = 'a[href], button, input, select, textarea, summary, [tabindex]';
 
-export function ModalLayer({ onDismiss, children, className, ...props }: ModalLayerProps) {
+export function ModalLayer(props: ModalLayerProps) {
+  const scene = useGuideScene();
+  return scene ? <InlineExample {...props} /> : <NativeModal {...props} />;
+}
+
+function InlineExample({ onDismiss, children, className, 'aria-label': label, 'aria-labelledby': labelledBy,
+  'aria-describedby': describedBy }: ModalLayerProps) {
+  const ref = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const layer = ref.current!;
+    const previous = document.activeElement;
+    if (!(previous instanceof HTMLElement) || !previous.closest('.guide-demo') || layer.contains(previous)) return;
+    (layer.querySelector<HTMLElement>('[data-initial-focus], h2') ?? layer).focus();
+    return () => {
+      if (previous.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, []);
+  return <section ref={ref} tabIndex={-1} aria-label={label} aria-labelledby={labelledBy} aria-describedby={describedBy}
+    className={cx('guide-inline', className)} onKeyDown={event => {
+      if (event.key === 'Escape') { event.preventDefault(); onDismiss(); }
+    }}>
+    {children}
+  </section>;
+}
+
+function NativeModal({ onDismiss, children, className, ...props }: ModalLayerProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const pointerStartedOutside = useRef(false);
   useLayoutEffect(() => {
@@ -199,7 +225,7 @@ export const Modal: React.FC<ModalProps> = ({
       <div className={cx(modalBoxStyle, 'dialog-content', className)}>
         <div className={modalHeaderStyle}>
           <div className={modalHeaderContentStyle}>
-            {title && <h2 id={titleId} className={modalTitleStyle}>{title}</h2>}
+            {title && <h2 id={titleId} tabIndex={-1} className={modalTitleStyle}>{title}</h2>}
             {description && <p id={descriptionId} className={modalDescriptionStyle}>{description}</p>}
           </div>
           <button

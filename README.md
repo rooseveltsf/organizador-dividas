@@ -1,4 +1,4 @@
-# 💰 Organizador de Dívidas & Finanças Pessoais
+# Caderno de Dívidas
 
 > Sistema completo de gestão financeira pessoal e controle de dívidas com suporte a múltiplos perfis, projeção de despesas fixas, cálculo dinâmico de parcelamentos e **leitura inteligente de contracheques (PDF)** com visualização lado a lado.
 
@@ -16,6 +16,7 @@
   - [4. Importação Inteligente de Contracheque (PDF)](#4-importação-inteligente-de-contracheque-pdf)
   - [5. Compromissos futuros](#5-compromissos-futuros)
 - [Estrutura de Diretórios](#-estrutura-de-diretórios)
+- [Aplicativo desktop para Windows](#aplicativo-desktop-para-windows)
 - [Guia de Instalação e Execução](#-guia-de-instalação-e-execução)
   - [Pré-requisitos](#pré-requisitos)
   - [Passo a Passo](#passo-a-passo)
@@ -30,7 +31,7 @@
 
 ## 🔭 Visão Geral
 
-O **Organizador de Dívidas** foi desenvolvido para solucionar a desorganização financeira pessoal familiar ou individual. Ele permite isolar as finanças por perfis de usuários com personalização visual própria (cores e identidade), além de oferecer previsibilidade orçamentária através do controle rigoroso de despesas fixas, assinaturas recorrentes, compras parceladas e entradas de salário.
+O **Caderno de Dívidas** foi desenvolvido para solucionar a desorganização financeira pessoal familiar ou individual. Ele permite isolar as finanças por perfis de usuários com personalização visual própria (cores e identidade), além de oferecer previsibilidade orçamentária através do controle rigoroso de despesas fixas, assinaturas recorrentes, compras parceladas e entradas de salário.
 
 Destaca-se pelo recurso de **Importação Inteligente de Contracheque (Holerite em PDF)**: o usuário faz o upload do documento, o sistema analisa o texto e as coordenadas espaciais das rubricas via `pdfjs-dist` e apresenta uma tela dividida (*split-screen*) com o PDF original à esquerda e a tabela editável à direita para conferência e gravação em lote.
 
@@ -41,10 +42,11 @@ Destaca-se pelo recurso de **Importação Inteligente de Contracheque (Holerite 
 O projeto está estruturado em **npm workspaces**:
 
 ```
-organizador-dividas/
+caderno-dividas/
 ├── apps/
 │   ├── api/      # Backend REST em Node.js, Express, Prisma ORM e SQLite
-│   └── web/      # Frontend SPA em React 18, Vite e Panda CSS
+│   ├── web/      # Frontend SPA em React 18, Vite e Panda CSS
+│   └── desktop/  # Electron, migração local e instalador NSIS
 ├── packages/
 │   └── shared/   # Tipos TypeScript, interfaces DTO e schemas Zod compartilhados
 └── package.json  # Scripts raiz e orquestração de workspaces
@@ -111,7 +113,7 @@ organizador-dividas/
 ### 4. Importação Inteligente de Contracheque (PDF)
 - **Upload Seguro:** Drag-and-drop com validação estrita para `.pdf` e limite de 5MB.
 - **Visualização Split-Screen Lado a Lado**:
-  - **Coluna da Esquerda (40%):** Iframe com o documento original carregado em memória (`URL.createObjectURL`), permitindo zoom, navegação de páginas e auditoria visual sem salvar arquivos temporários desnecessários no disco.
+  - **Coluna da Esquerda (40%):** prévia do documento original em memória. O navegador web usa o visualizador de PDF do próprio navegador. O Electron renderiza as páginas na mesma janela com PDF.js.
   - **Coluna da Direita (60%):** Painel de conferência e edição dos dados extraídos.
 - **Extração Automática:**
   - Identificação de Razão Social da empresa e Mês de Referência.
@@ -149,7 +151,7 @@ Cadastre os itens no perfil, com preço estimado e condições de pagamento opci
 ## 📁 Estrutura de Diretórios
 
 ```
-organizador-dividas/
+caderno-dividas/
 ├── apps/
 │   ├── api/
 │   │   ├── prisma/
@@ -195,18 +197,54 @@ organizador-dividas/
 
 ---
 
+## Aplicativo desktop para Windows
+
+O instalador NSIS é para Windows x64 e instala por usuário. Abra **Caderno de Dívidas** pelo menu Iniciar ou pelo atalho da área de trabalho. O aplicativo empacotado usa o Chromium e o Node.js do Electron e funciona offline. Nesta entrega, o instalador é **sem assinatura digital**. O Windows pode mostrar um aviso de editor desconhecido.
+
+### Compilar e testar
+
+Na máquina de desenvolvimento, use Windows x64, Node.js 24 LTS e npm. A instalação das dependências e o primeiro empacotamento baixam o Electron e as ferramentas NSIS.
+
+```powershell
+npm ci
+npm run desktop:dev     # Compila e abre no Electron com dados de desenvolvimento
+npm run desktop:build   # Compila React, Express, Prisma, contratos e Electron
+npm run desktop:dist    # Gera dist/desktop/Caderno-de-Dividas-1.0.0-Windows-x64-Setup.exe
+npm run test:desktop    # Testa os SQLs utilizados pelo instalador com bancos temporários
+npm test               # Testa os contratos e os fluxos financeiros existentes
+```
+
+Para rodar o teste do binário compilado, defina `$env:DESKTOP_TEST_EXECUTABLE` para o caminho do `.exe` instalado e execute `node --test tests/desktop-package.browser.cjs`. O teste cria uma pasta temporária separada e usa apenas dados fictícios.
+
+O desktop serve a interface e `/api` no mesmo endereço de loopback, com porta escolhida pelo sistema. O Electron inicializa o Express em um `utilityProcess` e libera a janela quando o Prisma está conectado. Os comandos web abaixo continuam disponíveis.
+
+### Dados e importação da versão web
+
+- O Caderno de Dívidas usa a pasta de dados histórica para abrir os perfis e lançamentos das instalações anteriores. A base inicial fica em `%APPDATA%\Organizador de Dívidas\bases\principal\organizador.sqlite`. A versão de desenvolvimento usa `%APPDATA%\Organizador de Dívidas (Desenvolvimento)`. Para uma validação isolada, inicie o executável com `--user-data-dir="C:\caminho\de teste"`.
+- Use **Dados → Importar banco da versão web… → Selecionar banco SQLite**. Escolha o arquivo original. Se a instalação web usa WAL, selecione o banco na pasta onde estão seus arquivos auxiliares. O aplicativo faz uma cópia consistente e valida sua integridade e seu schema.
+- Para cada perfil protegido, informe seu PIN de quatro dígitos e o `PROFILE_PIN_SECRET` original da versão web. Corrija a configuração se a validação falhar. Após **Ativar base importada**, desbloqueie o perfil novamente. A importação descarta as sessões da cópia e reinicia seus contadores de tentativas.
+- Cada importação fica em `bases\importacao-*`. O arquivo `base-ativa.txt` indica qual pasta está selecionada. A base web original e a base desktop anterior ficam em seus locais. O `pin-secret.bin` de cada base é protegido pelo `safeStorage` do Electron na conta Windows que o gravou. Preserve o segredo original da versão web em local seguro enquanto precisar recuperar ou repetir a importação.
+
+### Backup e recuperação
+
+Antes de migrar uma base existente, o app guarda um snapshot SQLite consistente na subpasta `backups` da base. Os SQLs originais são aplicados em ordem depois do schema histórico de `8a4fd12`. O inicializador reconhece schemas conhecidos criados diretamente pelo Prisma e registra as migrações já refletidas no schema. Uma falha de migração reverte a transação e mantém o snapshot.
+
+Para um backup manual, encerre o app e copie toda a pasta `%APPDATA%\Organizador de Dívidas`. Ela contém a seleção ativa, as bases e seus arquivos `pin-secret.bin`. Restaure na mesma conta Windows.
+
+Para recuperar após falha, aguarde o app encerrar e guarde uma cópia da pasta de dados. Na pasta da base afetada, mova `organizador.sqlite` e seus arquivos `-wal` e `-shm`, se existirem, para uma pasta de recuperação. Copie o snapshot escolhido de `backups` para `organizador.sqlite` e mantenha o `pin-secret.bin` da mesma base. Abra novamente com uma versão compatível. Para voltar à base desktop anterior após uma importação, edite `base-ativa.txt` com o nome da pasta desejada em `bases`, por exemplo `principal`, sempre com o app fechado.
+
 ## 🛠 Guia de Instalação e Execução
 
 ### Pré-requisitos
-- **Node.js**: versão 18.x ou superior (recomendado 20.x LTS)
+- **Node.js**: versão 22.13 ou superior para a versão web, com Node.js 24 LTS recomendado para gerar o aplicativo desktop.
 - **npm**: versão 9.x ou superior
 
 ### Passo a Passo
 
 1. **Clone o repositório:**
    ```bash
-   git clone <URL_DO_REPOSITORIO>
-   cd organizador-dividas
+   git clone <URL_DO_REPOSITORIO> caderno-dividas
+   cd caderno-dividas
    ```
 
 2. **Instale todas as dependências do monorepo:**

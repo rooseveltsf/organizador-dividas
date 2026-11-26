@@ -81,6 +81,12 @@ async function browserPage(t) {
   return { send, evaluate };
 }
 
+async function skipWelcome(evaluate) {
+  const skip = `[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Pular e usar o aplicativo')`;
+  await waitFor(() => evaluate(`Boolean(${skip})`), 'a página de boas-vindas');
+  await evaluate(`${skip}.click()`);
+}
+
 const profiles = ['Alfa', 'Beta'].map(name => ({
   id: name.toLowerCase(), name, avatarInitials: name.slice(0, 2),
   primaryColor: '#3b82f6', secondaryColor: '#8b5cf6',
@@ -168,6 +174,12 @@ test('recuperação de falhas, troca de período e gravações simultâneas no n
     };
   ` });
   await send('Page.navigate', { url: webUrl });
+  await send('Emulation.setDeviceMetricsOverride', { width: 320, height: 568, deviceScaleFactor: 1, mobile: true });
+  await waitFor(() => evaluate(`[...document.querySelectorAll('.guide-front button')].length === 2`), 'as duas escolhas da capa');
+  assert.equal(await evaluate(`[...document.querySelectorAll('.guide-front button')].every(button => button.getBoundingClientRect().bottom <= innerHeight)`), true);
+  await skipWelcome(evaluate);
+  assert.deepEqual(await evaluate(`JSON.parse(localStorage.getItem('@organizador:tutorial'))`), { choice: 'skipped' });
+  await send('Emulation.clearDeviceMetricsOverride');
   const button = label => `[...document.querySelectorAll('button')].find(button =>
     button.getAttribute('aria-label') === ${JSON.stringify(label)} ||
     button.textContent.trim() === ${JSON.stringify(label)})`;
@@ -340,6 +352,7 @@ test('compromissos futuros no celular preservam o mês ao trocar de perfil e loc
     };
   ` });
   await send('Page.navigate', { url: webUrl });
+  await skipWelcome(evaluate);
 
   const visible = text => waitFor(() => evaluate('document.body.innerText.includes(' + JSON.stringify(text) + ')'), text);
   const click = async label => {
@@ -432,6 +445,7 @@ test('simulação mensal destaca o déficit, recalcula as parcelas e abre evidê
     };
   }` });
   await send('Page.navigate', { url: webUrl });
+  await skipWelcome(evaluate);
   const click = async label => {
     const button = `[...document.querySelectorAll('button')].find(button =>
       (button.ariaLabel === ${JSON.stringify(label)} || button.textContent.trim() === ${JSON.stringify(label)}) && !button.disabled)`;
@@ -560,6 +574,7 @@ test('PIN no navegador isola trocas rápidas, restauração, expiração e bloqu
     };
   ` });
   await send('Page.navigate', { url: webUrl });
+  await skipWelcome(evaluate);
   const visible = text => waitFor(() => evaluate('document.body.innerText.includes(' + JSON.stringify(text) + ')'), text);
   const absent = async text => assert.equal(await evaluate('document.body.innerText.includes(' + JSON.stringify(text) + ')'), false, text);
   const click = async label => {

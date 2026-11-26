@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
@@ -31,13 +31,37 @@ import { useProfiles } from '../contexts/ProfileContext';
 import { useTransactions } from '../contexts/TransactionContext';
 import { Button, Input, ModalLayer, Select } from './ui';
 import './PayslipImportModal.css';
+import { useGuideScene } from '../tutorial/GuideContext';
 
 const steps = ['Arquivo', 'Conferência', 'Lançamentos', 'Confirmação'] as const;
+const DesktopPdfPreview = typeof __ORGANIZADOR_DESKTOP__ !== 'undefined' && __ORGANIZADOR_DESKTOP__
+  ? lazy(() => import('./DesktopPdfPreview')) : null;
 type Step = (typeof steps)[number];
 type BatchItem = BatchCreateTransactionDTO['transactions'][number];
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const month = new Intl.DateTimeFormat('pt-BR', { month: 'short', year: 'numeric', timeZone: 'UTC' });
 const calendarDate = new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' });
+
+class PdfPreviewBoundary extends React.Component<React.PropsWithChildren, { unavailable: boolean }> {
+  state = { unavailable: false };
+
+  static getDerivedStateFromError() {
+    return { unavailable: true };
+  }
+
+  render() {
+    if (this.state.unavailable) {
+      return (
+        <div className="payslip-local-preview">
+          <p role="alert">
+            Não foi possível carregar a prévia do PDF. Você ainda pode conferir e registrar os lançamentos.
+          </p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export interface PayslipImportModalProps {
   isOpen: boolean;
@@ -150,21 +174,56 @@ function EntryFields({
   );
 }
 
+function extractedEntries(data: PayslipParseResult | null) {
+  if (!data) return { netEntries: [], items: [] };
+  const hasAdvance = Boolean(data.hasAdvancePayment && (data.advanceAmount ?? 0) > 0);
+  const reference = data.referenceMonth ? parseCalendarDate(data.referenceMonth + '-01') : undefined;
+  const nextMonth = reference ? addMonths(reference, 1) : undefined;
+  const balance: EditablePayslipItem = {
+    tempId: 'balance',
+    description: hasAdvance ? 'Saldo de Salário (5º dia útil)' : 'Salário Líquido',
+    type: 'income', category: 'fixed', amount: data.netAmount || 0, selected: true,
+    suggestedDate: data.netBalanceDate || (nextMonth ? nextMonth.toISOString().slice(0, 7) + '-05' : ''),
+  };
+  const advance: EditablePayslipItem = {
+    ...balance, tempId: 'advance', description: 'Adiantamento Salarial (Quinzena)', isAdvance: true,
+    amount: data.advanceAmount || 0,
+    suggestedDate: data.advanceDate || (data.referenceMonth ? data.referenceMonth + '-20' : ''),
+  };
+  return {
+    netEntries: hasAdvance ? [advance, balance] : [balance],
+    items: (data.items || []).map((item): EditablePayslipItem => ({
+      ...item, tempId: item.tempId || crypto.randomUUID(), description: item.description || '',
+      amount: Number(item.amount) || 0, category: item.suggestedCategory || 'fixed',
+      currentInstallment: item.currentInstallment ?? 1, totalInstallments: item.totalInstallments ?? 1,
+      selected: item.selected !== false,
+    })),
+  };
+}
+
 function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'isOpen'>) {
   const { activeProfile, requestProfileApi } = useProfiles();
   const { refreshTransactions } = useTransactions();
-  const [step, setStep] = useState<Step>('Arquivo');
-  const [pane, setPane] = useState<'document' | 'review'>('review');
-  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const scene = useGuideScene();
+  const panel = scene?.panel;
+  const initialStep = panel === 'pdf-confirm' ? 'Confirmação'
+    : panel === 'pdf-entries' || panel === 'pdf-deductions' ? 'Lançamentos'
+    : panel === 'pdf-review' || panel === 'pdf-document' ? 'Conferência' : 'Arquivo';
+  const example = scene?.payslip;
+  const initial = initialStep === 'Arquivo' ? undefined : example;
+  const [step, setStep] = useState<Step>(initialStep);
+  const [pane, setPane] = useState<'document' | 'review'>(panel === 'pdf-document' ? 'document' : 'review');
+  const [pdfFile, setPdfFile] = useState<File | null>(initial?.file ?? null);
   const [pdfUrl, setPdfUrl] = useState('');
-  const [parsed, setParsed] = useState<PayslipParseResult | null>(null);
+  const [parsed, setParsed] = useState<PayslipParseResult | null>(initial?.data ?? null);
   const [dragging, setDragging] = useState(false);
   const [reading, setReading] = useState('');
   const [fileError, setFileError] = useState('');
-  const [mode, setMode] = useState<'net' | 'detailed'>('net');
-  const [netEntries, setNetEntries] = useState<EditablePayslipItem[]>([]);
-  const [items, setItems] = useState<EditablePayslipItem[]>([]);
-  const [onlyIncome, setOnlyIncome] = useState(true);
+  const [mode, setMode] = useState<'net' | 'detailed'>(panel === 'pdf-deductions' ? 'detailed' : 'net');
+  const [initialEntries] = useState(() => extractedEntries(initial?.data ?? null));
+  const [netEntries, setNetEntries] = useState<EditablePayslipItem[]>(initialEntries.netEntries);
+  const [items, setItems] = useState<EditablePayslipItem[]>(initialEntries.items);
+  const [onlyIncome, setOnlyIncome] = useState(panel !== 'pdf-deductions');
   const [repeatMonths, setRepeatMonths] = useState(1);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -178,14 +237,14 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
   const busy = Boolean(reading || saving);
 
   useEffect(() => {
-    if (!pdfFile) return;
+    if (!pdfFile || DesktopPdfPreview) return;
     const url = URL.createObjectURL(pdfFile);
     setPdfUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [pdfFile]);
 
   useLayoutEffect(() => {
-    heading.current?.focus();
+    if (!scene || document.activeElement?.closest('.guide-inline')) heading.current?.focus();
   }, [step, receipt]);
 
   useLayoutEffect(() => {
@@ -205,6 +264,7 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
   }
 
   async function readPdf(file?: File) {
+    if (example) file = example.file;
     if (!file || busy || !activeProfile) return;
     setFileError('');
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
@@ -230,45 +290,11 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
         body: form,
       });
       if (!data) throw new Error(failure);
-      const hasAdvance = Boolean(data.hasAdvancePayment && (data.advanceAmount ?? 0) > 0);
-      const reference = data.referenceMonth ? parseCalendarDate(data.referenceMonth + '-01') : undefined;
-      const nextMonth = reference ? addMonths(reference, 1) : undefined;
-      const balance: EditablePayslipItem = {
-        tempId: 'balance',
-        description: hasAdvance ? 'Saldo de Salário (5º dia útil)' : 'Salário Líquido',
-        type: 'income',
-        category: 'fixed',
-        amount: data.netAmount || 0,
-        selected: true,
-        suggestedDate:
-          data.netBalanceDate ||
-          (nextMonth
-            ? nextMonth.toISOString().slice(0, 7) + '-05'
-            : ''),
-      };
-      const advance: EditablePayslipItem = {
-        ...balance,
-        tempId: 'advance',
-        description: 'Adiantamento Salarial (Quinzena)',
-        isAdvance: true,
-        amount: data.advanceAmount || 0,
-        suggestedDate: data.advanceDate || (data.referenceMonth ? data.referenceMonth + '-20' : ''),
-      };
+      const extracted = extractedEntries(data);
       setPdfFile(file);
       setParsed(data);
-      setNetEntries(hasAdvance ? [advance, balance] : [balance]);
-      setItems(
-        (data.items || []).map((item) => ({
-          ...item,
-          tempId: item.tempId || crypto.randomUUID(),
-          description: item.description || '',
-          amount: Number(item.amount) || 0,
-          category: item.suggestedCategory || 'fixed',
-          currentInstallment: item.currentInstallment ?? 1,
-          totalInstallments: item.totalInstallments ?? 1,
-          selected: item.selected !== false,
-        })),
-      );
+      setNetEntries(extracted.netEntries);
+      setItems(extracted.items);
       setMode('net');
       setOnlyIncome(true);
       setRepeatMonths(1);
@@ -477,7 +503,13 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
                   )}
                 </div>
               </div>
-              {pdfUrl && <iframe tabIndex={-1} title="Prévia do contracheque" src={pdfUrl + '#navpanes=0&view=FitH'} />}
+              {DesktopPdfPreview && pdfFile ? (
+                <PdfPreviewBoundary key={pdfFile.name + pdfFile.lastModified}>
+                  <Suspense fallback={<p role="status">Carregando prévia…</p>}>
+                    <DesktopPdfPreview file={pdfFile} />
+                  </Suspense>
+                </PdfPreviewBoundary>
+              ) : pdfUrl && <iframe tabIndex={-1} title="Prévia do contracheque" src={pdfUrl + '#navpanes=0&view=FitH'} />}
             </aside>
           )}
 
@@ -508,7 +540,11 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
                       setDragging(false);
                       void readPdf(e.dataTransfer.files[0]);
                     }}
-                    onClick={() => { if (!busy) fileInput.current?.click(); }}
+                    onClick={() => {
+                      if (busy) return;
+                      if (example) void readPdf();
+                      else fileInput.current?.click();
+                    }}
                   >
                     {reading ? <Loader2 className="payslip-spin" aria-hidden="true" /> : <UploadCloud size={32} aria-hidden="true" />}
                     <strong id={id + '-pick'}>Selecionar PDF</strong>
@@ -930,6 +966,7 @@ function ImportSession({ onClose, onSuccess }: Omit<PayslipImportModalProps, 'is
               </Button>
               {(step !== 'Arquivo' || !!pdfFile) && (
                 <Button
+                  data-guide="pdf-next"
                   aria-disabled={busy || ((step === 'Lançamentos' || step === 'Confirmação') && Boolean(issue)) || undefined}
                   aria-describedby={step === 'Lançamentos' && issue ? id + '-issue' : undefined}
                   onClick={() => {

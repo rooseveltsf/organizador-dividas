@@ -8,6 +8,7 @@ import {
 import { useTransactions } from '../contexts/TransactionContext';
 import { Button, Input, Select } from './ui';
 import { formatCurrency } from './MonthlySummary';
+import { useGuideScene } from '../tutorial/GuideContext';
 
 export interface TransactionFormProps {
   initialData?: Transaction;
@@ -38,16 +39,20 @@ function moneyInput(cents: number) {
 
 export function TransactionForm({ initialData, fixedType, onSuccess, onCancel, onSavingChange }: TransactionFormProps) {
   const { addTransaction, updateTransaction, selectedMonth, selectedYear } = useTransactions();
+  const scene = useGuideScene();
   const initialType = fixedType ?? initialData?.type ?? 'expense';
+  const lightExample = scene?.light === 'absent' && initialType === 'expense' && !initialData;
+  const installmentExample = scene?.panel === 'installment' && !initialData;
   const [type, setType] = useState(initialType);
   const defaultCategory = initialType === 'expense' ? 'installment' : 'fixed';
-  const [category, setCategory] = useState<TransactionCategory>(initialData?.category ?? defaultCategory);
-  const [description, setDescription] = useState(initialData?.description ?? '');
-  const [amount, setAmount] = useState(initialData ? String(initialData.amount).replace('.', ',') : '');
-  const [date, setDate] = useState(() => initialData?.date.split('T')[0] ?? periodDate(selectedMonth, selectedYear));
+  const [category, setCategory] = useState<TransactionCategory>(initialData?.category ?? (lightExample ? 'daily' : defaultCategory));
+  const [description, setDescription] = useState(initialData?.description ?? (lightExample ? 'Conta de luz' : installmentExample ? 'Celular' : ''));
+  const [amount, setAmount] = useState(initialData ? String(initialData.amount).replace('.', ',') : lightExample ? '148,32' : installmentExample ? '210,00' : '');
+  const [date, setDate] = useState(() => initialData?.date.split('T')[0] ?? (lightExample && scene
+    ? scene.today.slice(0, 7) + '-10' : periodDate(selectedMonth, selectedYear)));
   const [byTotal, setByTotal] = useState(false);
   const [current, setCurrent] = useState(String(initialData?.currentInstallment ?? 1));
-  const [total, setTotal] = useState(String(initialData?.totalInstallments ?? (initialData?.category === 'installment' ? 1 : 2)));
+  const [total, setTotal] = useState(String(initialData?.totalInstallments ?? (installmentExample ? 4 : initialData?.category === 'installment' ? 1 : 2)));
   const [months, setMonths] = useState('12');
   const [attempted, setAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -168,7 +173,7 @@ export function TransactionForm({ initialData, fixedType, onSuccess, onCancel, o
         <Input label={type === 'income' ? 'Data de recebimento' : 'Data de vencimento'} name="date" type="date"
           value={date} required onChange={e => setDate(e.target.value)} errorMessage={error('date')} />
       </div>
-      <div>
+      <div data-guide="category">
         <Select label="Categoria" value={category} aria-describedby={helpId} onChange={e => changeCategory(e.target.value as TransactionCategory)}>
           {(Object.keys(categories) as TransactionCategory[]).filter(key => key !== 'installment' || type === 'expense' || installment)
             .map(key => <option key={key} value={key}>{categories[key][0]}</option>)}

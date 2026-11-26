@@ -10,6 +10,7 @@ import { Button, Input, Select } from '../components/ui';
 import { useProfiles, useTransactions } from '../contexts';
 import { moneyPattern, parseMoneyInput } from '../moneyInput';
 import { shoppingListPath } from '../shoppingList';
+import { useGuideScene } from '../tutorial/GuideContext';
 
 const loadError = 'Não foi possível carregar os lançamentos deste perfil.';
 type OpenTransaction = (tx: Pick<Transaction, 'id' | 'date'>) => void;
@@ -20,39 +21,49 @@ export function PurchaseSimulationPage({ onViewChange, onOpenTransaction, item }
   item: ShoppingItem | null;
 }) {
   const { activeProfile } = useProfiles();
+  const scene = useGuideScene();
+  const [resetCount, setResetCount] = useState(0);
   const heading = useRef<HTMLHeadingElement>(null);
-  useLayoutEffect(() => { heading.current?.focus(); }, []);
+  useLayoutEffect(() => { if (!scene) heading.current?.focus(); }, [scene]);
 
   if (!activeProfile) return null;
   return (
     <main className="notebook-page dashboard purchase-page">
       <NotebookProfileHeader />
       <NotebookViews current="purchase" onChange={onViewChange} />
-      <header className="commitments-heading">
-        <h1 ref={heading} tabIndex={-1}>Simular compra</h1>
-        <p>Veja quanto sobra por mês e em quais meses a compra aperta o orçamento.</p>
-      </header>
-      <SimulationForm key={item?.id ?? activeProfile.id} profileId={activeProfile.id} item={item}
-        onOpenTransaction={onOpenTransaction} onReset={() => onViewChange('purchase')} />
+      <div className="notebook-sheet">
+        <header className="commitments-heading">
+          <h1 ref={heading} tabIndex={-1}>Simular compra</h1>
+          <p>Veja quanto sobra por mês e em quais meses a compra aperta o orçamento.</p>
+        </header>
+        <SimulationForm key={(item?.id ?? activeProfile.id) + '-' + resetCount} profileId={activeProfile.id} item={item}
+          exampleOffer={scene?.projection && resetCount === 0}
+          onOpenTransaction={onOpenTransaction} onReset={() => {
+            onViewChange('purchase');
+            setResetCount(count => count + 1);
+            heading.current?.focus();
+          }} />
+      </div>
     </main>
   );
 }
 
-function SimulationForm({ profileId, item, onOpenTransaction, onReset }: {
-  profileId: string; item: ShoppingItem | null; onOpenTransaction: OpenTransaction; onReset: () => void;
+function SimulationForm({ profileId, item, onOpenTransaction, onReset, exampleOffer }: {
+  profileId: string; item: ShoppingItem | null; onOpenTransaction: OpenTransaction; onReset: () => void; exampleOffer?: boolean;
 }) {
   const { requestProfileApi } = useProfiles();
+  const scene = useGuideScene();
   const { pendingRows } = useTransactions();
   const awaitingWrites = pendingRows.size > 0;
   const [rows, setRows] = useState<Transaction[] | 'error' | 'closed' | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [today] = useState(() => calendarDay(new Date()));
-  const [product, setProduct] = useState(item?.name ?? '');
-  const [total, setTotal] = useState(item?.estimatedAmount?.toString() ?? '');
-  const [payment, setPayment] = useState<string>(item ? item.paymentMethod ?? '' : 'cash');
+  const [product, setProduct] = useState(item?.name ?? (exampleOffer ? 'Fone' : ''));
+  const [total, setTotal] = useState(item?.estimatedAmount?.toString() ?? (exampleOffer ? '240,00' : ''));
+  const [payment, setPayment] = useState<string>(item ? item.paymentMethod ?? '' : exampleOffer ? 'installments' : 'cash');
   const [paymentDate, setPaymentDate] = useState(item ? (item.paymentMethod === 'cash' ? item.scheduledDate ?? '' : '') : today);
   const [firstDue, setFirstDue] = useState(item ? (item.paymentMethod === 'installments' ? item.scheduledDate ?? '' : '') : today);
-  const [count, setCount] = useState(item ? item.installmentCount?.toString() ?? '' : '2');
+  const [count, setCount] = useState(item ? item.installmentCount?.toString() ?? '' : exampleOffer ? '3' : '2');
   const [margin, setMargin] = useState('');
   const [assumptions, setAssumptions] = useState<ReadonlyMap<string, RecurrenceAssumption>>(new Map());
   const parcelled = payment === 'installments';
@@ -135,12 +146,19 @@ function SimulationForm({ profileId, item, onOpenTransaction, onReset }: {
       </form>
       {(awaitingWrites || rows === null) && <p role="status">Carregando lançamentos do perfil…</p>}
       {rows === 'error' && <div className="purchase-results"><p role="alert">{loadError}</p>
-        <Button variant="outline" onClick={() => { setRows(null); setAttempt(previous => previous + 1); }}>Tentar novamente</Button>
+        <Button variant="outline" data-guide="simulation-retry" onClick={() => {
+          scene?.recover?.();
+          setRows(null);
+          setAttempt(previous => previous + 1);
+        }}>Tentar novamente</Button>
       </div>}
       {!result && Array.isArray(rows) && !awaitingWrites && <p className="purchase-results" role="status">
         {total ? 'Confira o valor total, a forma de pagamento e a data. Cada parcela precisa valer pelo menos R$ 0,01.'
           : 'Informe o valor total da oferta para ver a comparação mensal.'}</p>}
-      {result && <MonthlyResult result={result} product={product.trim()} onOpenTransaction={onOpenTransaction} />}
+      {result && <>
+        <MonthlyResult result={result} product={product.trim()} onOpenTransaction={onOpenTransaction} />
+        <Button data-guide="reset-simulation" variant="outline" onClick={onReset}>Nova simulação</Button>
+      </>}
     </>
   );
 }

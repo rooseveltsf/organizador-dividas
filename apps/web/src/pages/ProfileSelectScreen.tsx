@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { ArrowRight, Check, Lock, Notebook, Plus, Search, Trash2 } from 'lucide-react';
 import type { Profile } from '@organizador/shared';
@@ -7,6 +7,7 @@ import { NotebookHeader } from '../components/NotebookHeader';
 import { ProfileEntryDialog } from '../components/ProfilePin';
 import { Button, emptyPin, Input, Modal, PinField } from '../components/ui';
 import './ProfileSelectScreen.css';
+import { EXAMPLE_PROFILE, useGuideScene } from '../tutorial/GuideContext';
 
 const COLOR_PRESETS = [
   { name: 'Petróleo e sálvia', primary: '#244E42', secondary: '#ABB8A2' },
@@ -35,46 +36,20 @@ function fullHex(value: string) {
   return '';
 }
 
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/);
-  if (!parts[0]) return 'PF';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
+type CoverProfile = Pick<Profile, 'name' | 'primaryColor' | 'secondaryColor' | 'hasPin'>;
 
-// Escolhe a tinta com maior contraste sobre a capa, inclusive nas paletas personalizadas.
-function monogramInk(hex: string) {
-  const [r, g, b] = [1, 3, 5].map((start) => {
-    const channel = parseInt(hex.slice(start, start + 2), 16) / 255;
-    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-  });
-  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? '#000000' : '#FFFFFF';
-}
-
-type ProfileIdentity = Omit<Profile, 'id'>;
-
-function ProfileLabel({ profile }: { profile: ProfileIdentity }) {
-  const cover = fullHex(profile.primaryColor) || defaultColors.primary;
+function ProfileCover({ profile }: { profile: CoverProfile }) {
   return (
-    <span className="directory-label">
-      <span
-        aria-hidden="true"
-        className="directory-monogram"
-        style={{
-          backgroundColor: cover,
-          borderLeftColor: fullHex(profile.secondaryColor) || defaultColors.secondary,
-          color: monogramInk(cover),
-        }}
-      >
-        {profile.avatarInitials || initials(profile.name)}
+    <span className="directory-cover notebook-cover" style={{
+      '--cover-color': fullHex(profile.primaryColor) || defaultColors.primary,
+      '--cover-trim': fullHex(profile.secondaryColor) || defaultColors.secondary,
+    } as CSSProperties}>
+      <span className="directory-label">
+        <span className="directory-name">{profile.name}</span>
+        {profile.hasPin && <Lock className="directory-lock" size={15} aria-hidden="true" />}
       </span>
-      <span className="directory-text">
-        <span className="directory-name">{profile.name} {profile.hasPin &&
-          <Lock className="directory-lock" size={15} aria-hidden="true" />}</span>
-        <span className="directory-enter">
-          Entrar no perfil <ArrowRight size={15} aria-hidden="true" />
-        </span>
+      <span className="directory-enter">
+        Entrar no perfil <ArrowRight size={15} aria-hidden="true" />
       </span>
     </span>
   );
@@ -130,9 +105,18 @@ function ColorField({
   );
 }
 
+export function NotebookCoverArt() {
+  return <div className="cover-art" aria-hidden="true">
+    <div className="book-back" />
+    <div className="book-front notebook-cover"><span className="book-label"><i /><i /><i /></span></div>
+    <span className="cover-pencil" />
+  </div>;
+}
+
 function CreateProfileDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (name: string) => void }) {
   const { createProfile } = useProfiles();
-  const [name, setName] = useState('');
+  const scene = useGuideScene();
+  const [name, setName] = useState(scene ? EXAMPLE_PROFILE : '');
   const [primaryColor, setPrimary] = useState(defaultColors.primary);
   const [secondaryColor, setSecondary] = useState(defaultColors.secondary);
   const [protect, setProtect] = useState(false);
@@ -278,10 +262,9 @@ function CreateProfileDialog({ onClose, onCreated }: { onClose: () => void; onCr
           <div className="directory-preview">
             <h3>Prévia na seleção de perfis</h3>
             <div className="directory-card">
-              <ProfileLabel
+              <ProfileCover
                 profile={{
                   name: name.trim() || 'Nome do perfil',
-                  avatarInitials: initials(name),
                   primaryColor,
                   secondaryColor,
                   hasPin: protect,
@@ -316,7 +299,8 @@ export function ProfileSelectScreen({ entryNotice, clearEntryNotice, onProfileCr
 }) {
   const { profiles, selectProfile, entry, accessNotice, deleteProfile, profileListStatus, fetchProfiles } =
     useProfiles();
-  const [creating, setCreating] = useState(false);
+  const scene = useGuideScene();
+  const [creating, setCreating] = useState(scene?.panel === 'create');
   const [removing, setRemoving] = useState<Profile | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -389,9 +373,10 @@ export function ProfileSelectScreen({ entryNotice, clearEntryNotice, onProfileCr
             <p role="alert" className="directory-error">{profileListStatus === 'error' ? 'Não foi possível carregar a lista de perfis.' : ''}</p>
           </div>
           {(profileListStatus === 'error' || retrying) && (
-            <Button variant="outline" aria-disabled={retrying || undefined} onClick={async () => {
+            <Button variant="outline" data-guide="profile-retry" aria-disabled={retrying || undefined} onClick={async () => {
               if (retrying) return;
               setRetrying(true);
+              scene?.recover?.();
               try {
                 await fetchProfiles();
               } finally {
@@ -409,22 +394,11 @@ export function ProfileSelectScreen({ entryNotice, clearEntryNotice, onProfileCr
             <p>
               Crie um perfil com seu nome e suas cores para começar a usar o caderno financeiro.
             </p>
-            <Button ref={createButton} onClick={openCreate}>
+            <Button ref={createButton} data-guide="create-profile" onClick={openCreate}>
               <Plus size={16} aria-hidden="true" /> Criar meu perfil
             </Button>
           </div>
-          <div className="cover-art" aria-hidden="true">
-            <div className="book-back" />
-            <div className="book-front">
-              <span className="book-label">
-                <i />
-                <i />
-                <i />
-              </span>
-              <span className="book-band" />
-            </div>
-            <span className="cover-pencil" />
-          </div>
+          <NotebookCoverArt />
         </section>
       ) : (
         <>
@@ -433,7 +407,6 @@ export function ProfileSelectScreen({ entryNotice, clearEntryNotice, onProfileCr
               <h1 tabIndex={-1} ref={title}>
                 Seus <em>perfis</em>
               </h1>
-              <p>Escolha um perfil para abrir o painel.</p>
             </div>
             <Button ref={createButton} variant="outline" onClick={openCreate}>
               <Plus size={16} aria-hidden="true" /> Criar perfil
@@ -473,7 +446,7 @@ export function ProfileSelectScreen({ entryNotice, clearEntryNotice, onProfileCr
                         selectProfile(profile);
                       }}
                     >
-                      <ProfileLabel profile={profile} />
+                      <ProfileCover profile={profile} />
                     </button>
                     {profile.hasPin ? <span id={'protected-' + profile.id} className="sr-only">Protegido por PIN</span> : <button
                       className="profile-delete directory-delete"

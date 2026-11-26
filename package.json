@@ -1,8 +1,8 @@
 {
-  "name": "organizador-dividas",
+  "name": "caderno-dividas",
   "version": "1.0.0",
   "private": true,
-  "description": "Monorepo para o sistema de Organizador de Dívidas e Finanças Pessoais",
+  "description": "Caderno de Dívidas para controle de finanças pessoais",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -14,7 +14,11 @@
     "dev:web": "npm run dev -w @organizador/web",
     "dev:shared": "npm run dev -w @organizador/shared",
     "test": "npm run build -w @organizador/shared && npm run build -w @organizador/api && node --test tests/financial-rules.test.cjs tests/purchase-simulation.test.cjs tests/shopping-list.test.cjs",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build -w @organizador/shared && npm run build -w @organizador/api && npm run build -w @organizador/web && npm run build -w @organizador/desktop",
+    "desktop:dev": "npm run desktop:build && npm run start -w @organizador/desktop",
+    "desktop:build": "npm run build -w @organizador/shared && npm run prisma:generate -w @organizador/api && npm run build -w @organizador/api && npm run build:desktop -w @organizador/web && npm run build -w @organizador/desktop",
+    "desktop:dist": "npm run desktop:build && node apps/desktop/scripts/stage.cjs && electron-builder --config apps/desktop/electron-builder.cjs --win nsis --x64",
+    "test:desktop": "npm run desktop:build && node --test tests/desktop-database.test.cjs",
     "clean": "npm run clean --workspaces --if-present"
   },
   "keywords": [
@@ -26,6 +30,8 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "concurrently": "^10.0.6"
+    "concurrently": "^10.0.6",
+    "electron": "45.5.0",
+    "electron-builder": "26.18.0"
   }
 }

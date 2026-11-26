@@ -1,14 +1,20 @@
-import type { ReactNode } from 'react';
-import { BookOpen } from 'lucide-react';
+import { useContext, type ReactNode } from 'react';
+import { BookOpen, CircleHelp } from 'lucide-react';
 import { useProfiles } from '../contexts';
 import { ProfileSecurityActions } from './ProfilePin';
 import { Select } from './ui';
+import { GuideHelpContext } from '../tutorial/GuideContext';
 
 export function NotebookHeader({ children }: { children?: ReactNode }) {
+  const openHelp = useContext(GuideHelpContext);
   return (
     <header className="masthead">
-      <div className="wordmark"><BookOpen aria-hidden="true" size={24} strokeWidth={1.6} />Organizador de Dívidas</div>
-      <div className="masthead-tools">{children}</div>
+      <div className="wordmark"><BookOpen aria-hidden="true" size={24} strokeWidth={1.6} />Caderno de Dívidas</div>
+      <div className="masthead-tools">{children}
+        {openHelp && <button type="button" className="guide-help" onClick={event => openHelp(event.currentTarget)}>
+          <CircleHelp size={16} aria-hidden="true" /> Ajuda e tutorial
+        </button>}
+      </div>
     </header>
   );
 }

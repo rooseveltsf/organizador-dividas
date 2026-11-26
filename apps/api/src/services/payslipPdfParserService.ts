@@ -1,15 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { dirname, join } from 'node:path';
 import {
   PayslipParseResult,
   PayslipExtractedItem,
   TransactionCategory,
 } from '@organizador/shared';
 
-// Helper seguro para carregar pdfjs-dist em CommonJS
-async function getPdfjs(): Promise<any> {
-  const dynamicImport = new Function('specifier', 'return import(specifier)');
-  return dynamicImport('pdfjs-dist/legacy/build/pdf.mjs');
-}
+const pdfRoot = dirname(require.resolve('pdfjs-dist/package.json'));
+const pdfAssets = (directory: string) => join(pdfRoot, directory).replaceAll('\\', '/') + '/';
 
 export interface TextFragment {
   text: string;
@@ -105,13 +103,18 @@ export class PayslipPdfParserService {
    * e extrai de forma estruturada as fontes de renda, deduções e totais.
    */
   public static async parse(pdfBuffer: Buffer): Promise<PayslipParseResult> {
-    const pdfjs = await getPdfjs();
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
     const loadingTask = pdfjs.getDocument({
       data: new Uint8Array(pdfBuffer),
       useSystemFonts: true,
       disableFontFace: true,
       verbosity: 0,
+      cMapUrl: pdfAssets('cmaps'),
+      cMapPacked: true,
+      iccUrl: pdfAssets('iccs'),
+      standardFontDataUrl: pdfAssets('standard_fonts'),
+      wasmUrl: pdfAssets('wasm'),
     });
 
     const doc = await loadingTask.promise;

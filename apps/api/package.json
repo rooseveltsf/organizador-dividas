@@ -2,7 +2,7 @@
   "name": "@organizador/api",
   "version": "1.0.0",
   "private": true,
-  "description": "API REST do Organizador de Dívidas",
+  "description": "API REST do Caderno de Dívidas",
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",

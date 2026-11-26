@@ -7,6 +7,7 @@
     "prepare": "panda codegen",
     "dev": "vite",
     "build": "panda codegen && tsc && vite build",
+    "build:desktop": "panda codegen && tsc && vite build --mode desktop --outDir dist-desktop",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.2.1",
+    "pdfjs-dist": "^6.4.299",
     "typescript": "^5.4.5",
     "vite": "^5.2.11"
   }

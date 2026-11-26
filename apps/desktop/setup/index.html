@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'">
+    <title>Importar banco da versão web</title>
+    <link rel="stylesheet" href="import.css">
+    <script src="import.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>Importar banco da versão web</h1>
+      <p>Selecione o arquivo SQLite da versão web. Ao ativar a cópia, a base desktop atual ficará guardada na pasta de dados.</p>
+      <button type="button" id="choose">Selecionar banco SQLite</button>
+      <p id="status" role="status"></p>
+      <form id="form" hidden>
+        <fieldset id="protected" hidden>
+          <legend>Perfis protegidos</legend>
+          <label for="secret">PROFILE_PIN_SECRET da instalação web</label>
+          <input id="secret" type="password" maxlength="64" autocomplete="off" spellcheck="false">
+          <div id="pins"></div>
+        </fieldset>
+        <button type="submit">Ativar base importada</button>
+      </form>
+      <p id="error" role="alert"></p>
+    </main>
+  </body>
+</html>

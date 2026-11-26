@@ -243,6 +243,25 @@
   min-height: 0;
   border: 0;
 }
+.payslip-local-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.7rem;
+}
+.payslip-local-preview canvas {
+  width: 100%;
+  height: auto;
+}
+.payslip-page-controls {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+}
+.payslip-page-controls button { color: var(--colors-brand-700); }
+.payslip-page-controls button:disabled { opacity: 0.5; }
 .payslip-source {
   display: flex;
   flex-wrap: wrap;

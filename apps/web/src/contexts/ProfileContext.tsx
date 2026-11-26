@@ -6,10 +6,16 @@ const STORAGE_KEY = '@organizador:active_profile_id';
 const SESSION_KEY = '@organizador:profile_session';
 
 type StoredSession = { profileId: string; token: string };
+type ProfileSelection = { id: string | null; session?: StoredSession };
+export type ProfileSource = {
+  request: typeof requestApi;
+  readSelection: () => ProfileSelection;
+  saveSelection: (id: string | null, token?: string) => void;
+};
 type ActiveProfile = { profile: Profile; session?: { token: string; deadline: number }; intent: number };
 type Entry = { profile: Profile; pending: boolean; needsPin: boolean; error: string };
 
-function rememberedSelection(): { id: string | null; session?: StoredSession } {
+function rememberedSelection(): ProfileSelection {
   let id: string | null = null;
   try {
     id = localStorage.getItem(STORAGE_KEY);
@@ -107,7 +113,10 @@ export interface ProfileContextData {
 
 export const ProfileContext = createContext<ProfileContextData | undefined>(undefined);
 
-export function ProfileProvider({ children }: { children: ReactNode }) {
+const liveSource: ProfileSource = { request: requestApi, readSelection: rememberedSelection, saveSelection: remember };
+
+export function ProfileProvider({ children, source = liveSource }: { children: ReactNode; source?: ProfileSource }) {
+  const { request, readSelection, saveSelection } = source;
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [active, setActive] = useState<ActiveProfile | null>(null);
   const activeRef = useRef<ActiveProfile | null>(null);
@@ -115,7 +124,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const activeProfile = active?.profile ?? null;
   const [entry, setEntry] = useState<Entry | null>(null);
   const [accessNotice, setAccessNotice] = useState('');
-  const [restored] = useState(rememberedSelection);
+  const [restored] = useState(readSelection);
   const didRestore = useRef(false);
   const [profileListStatus, setProfileListStatus] = useState<ProfileContextData['profileListStatus']>('loading');
   const listRequest = useRef<AbortController | null>(null);
@@ -123,6 +132,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const pendingProfiles = useRef(new Set<string>());
 
   useEffect(() => {
+    if (source !== liveSource) return;
     const root = document.documentElement;
     const primary = activeProfile?.primaryColor || '#3b82f6';
     const secondary = activeProfile?.secondaryColor || '#8b5cf6';
@@ -131,11 +141,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     root.style.setProperty('--profile-primary-soft', hexToRgba(primary, 0.15));
     root.style.setProperty('--profile-secondary', secondary);
     root.style.setProperty('--profile-secondary-soft', hexToRgba(secondary, 0.15));
-  }, [activeProfile]);
+  }, [activeProfile, source]);
 
   const revokeSession = useCallback(async (id: string, token?: string) => {
     if (!token) return;
-    const revoke = () => requestApi(profilePath(id) + '/session', 'Falha ao encerrar a sessão.', {
+    const revoke = () => request(profilePath(id) + '/session', 'Falha ao encerrar a sessão.', {
       method: 'DELETE', keepalive: true,
     }, token);
     try {
@@ -147,7 +157,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         setAccessNotice('A sessão foi removida desta aba. O servidor não confirmou o encerramento.');
       }
     }
-  }, []);
+  }, [request]);
 
   const clearActive = useCallback(() => {
     const previous = activeRef.current;
@@ -169,7 +179,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     const intent = ++selectionIntent.current;
     clearActive();
     restoringSession.current = options.session;
-    remember(profile.id, options.session?.token);
+    saveSelection(profile.id, options.session?.token);
     setAccessNotice('');
     setEntry({ profile, pending: true, needsPin: options.pin !== undefined, error: '' });
 
@@ -178,13 +188,13 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     try {
       let opened: { profile: Profile; session?: ProfileSession } | undefined;
       if (options.pin === undefined) {
-        const status = await requestApi<ProfileSessionStatus>(path, errorMessage, undefined, options.session?.token);
+        const status = await request<ProfileSessionStatus>(path, errorMessage, undefined, options.session?.token);
         if (status) {
           opened = { profile: status.profile };
           if (status.session && options.session) opened.session = { ...status.session, token: options.session.token };
         }
       } else {
-        opened = await requestApi(path, errorMessage, json('POST', { pin: options.pin }));
+        opened = await request(path, errorMessage, json('POST', { pin: options.pin }));
       }
       if (selectionIntent.current !== intent) {
         if (options.pin !== undefined) void revokeSession(profile.id, opened?.session?.token);
@@ -196,7 +206,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         ? { token: opened.session.token, deadline: performance.now() + opened.session.expiresInMs } : undefined;
       const access = { profile: opened.profile, session, intent };
       storeProfile(opened.profile);
-      remember(profile.id, session?.token);
+      saveSelection(profile.id, session?.token);
       restoringSession.current = undefined;
       activeRef.current = access;
       setActive(access);
@@ -208,7 +218,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       if (needsSession) {
         storeProfile(target);
         restoringSession.current = undefined;
-        remember(profile.id);
+        saveSelection(profile.id);
       }
       setEntry({
         profile: target, pending: false, needsPin: needsSession || options.pin !== undefined,
@@ -217,7 +227,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
           : error instanceof Error ? error.message : errorMessage,
       });
     }
-  }, [clearActive, revokeSession, storeProfile]);
+  }, [clearActive, revokeSession, storeProfile, request, saveSelection]);
 
   const selectProfile = useCallback((profile: Profile | null) => {
     if (profile) {
@@ -226,18 +236,18 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     }
     selectionIntent.current += 1;
     clearActive();
-    remember(null);
+    saveSelection(null);
     setEntry(null);
     setAccessNotice('');
-  }, [clearActive, enter]);
+  }, [clearActive, enter, saveSelection]);
 
   const lockProfile = useCallback(() => {
     const id = activeRef.current?.profile.id;
     if (!id) return;
     selectProfile(null);
-    remember(id);
+    saveSelection(id);
     setAccessNotice('Perfil bloqueado.');
-  }, [selectProfile]);
+  }, [selectProfile, saveSelection]);
 
   const unlockProfile = async (pin: string) => {
     if (entry && !entry.pending) await enter(entry.profile, { pin });
@@ -246,13 +256,13 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const requestProfileApi = useCallback(async <T,>(path: string, error: string, init?: RequestInit) => {
     if (!active || selectionIntent.current !== active.intent) throw new Error(error);
     try {
-      return await requestApi<T>(path, error, init, active.session?.token);
+      return await request<T>(path, error, init, active.session?.token);
     } catch (failure) {
       if (selectionIntent.current === active.intent && failure instanceof ApiError &&
           failure.code === 'PROFILE_SESSION_REQUIRED') void enter(active.profile);
       throw failure;
     }
-  }, [active, enter]);
+  }, [active, enter, request]);
 
   useEffect(() => {
     if (!active?.session) return;
@@ -270,7 +280,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     setProfileListStatus('loading');
 
     try {
-      const list = await requestApi<Profile[]>('/profiles', 'Não foi possível carregar a lista de perfis.', {
+      const list = await request<Profile[]>('/profiles', 'Não foi possível carregar a lista de perfis.', {
         signal: controller.signal,
       });
       if (!Array.isArray(list)) throw new Error();
@@ -281,7 +291,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
           didRestore.current = true;
           const profile = list.find(item => item.id === restored.id);
           if (profile) void enter(profile, { session: restored.session });
-          else remember(null);
+          else saveSelection(null);
         }
       }
     } catch {
@@ -289,7 +299,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     } finally {
       if (listRequest.current === controller) listRequest.current = null;
     }
-  }, [enter, restored]);
+  }, [enter, restored, request, saveSelection]);
 
   useEffect(() => {
     void fetchProfiles();
@@ -307,7 +317,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   async function createProfile(data: CreateProfileDTO) {
     const intent = ++selectionIntent.current;
     const error = 'Não foi possível criar o perfil. Tente novamente.';
-    const created = await requestApi<Profile>('/profiles', error, json('POST', data));
+    const created = await request<Profile>('/profiles', error, json('POST', data));
     if (!created?.id) throw new Error(error);
     storeProfile(created);
     refreshPendingList();
@@ -358,7 +368,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       const error = 'Não foi possível excluir o perfil. Tente novamente.';
       const init = currentPin === undefined ? { method: 'DELETE' } : json('DELETE', { currentPin });
       if (active?.profile.id === id) await requestProfileApi(profilePath(id), error, init);
-      else await requestApi(profilePath(id), error, init);
+    else await request(profilePath(id), error, init);
       setProfiles((previous) => previous.filter((profile) => profile.id !== id));
       if (activeRef.current?.profile.id === id) selectProfile(null);
     });

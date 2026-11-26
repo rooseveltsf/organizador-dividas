@@ -13,6 +13,13 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    define: {
+      __ORGANIZADOR_DESKTOP__: JSON.stringify(mode === 'desktop'),
+      ...(mode === 'desktop' && { 'import.meta.env.VITE_API_BASE_URL': JSON.stringify('/api') }),
+    },
+    ...(mode === 'desktop' && {
+      build: { target: 'esnext' },
+    }),
     resolve: {
       alias: [
         {

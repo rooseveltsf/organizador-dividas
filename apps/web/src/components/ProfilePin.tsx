@@ -2,6 +2,7 @@ import { useId, useRef, useState, type FormEvent } from 'react';
 import { Lock, Settings } from 'lucide-react';
 import { useProfiles } from '../contexts/ProfileContext';
 import { Button, emptyPin, Modal, PinField } from './ui';
+import { useGuideScene } from '../tutorial/GuideContext';
 
 export function ProfileEntryDialog() {
   const { entry, selectProfile, unlockProfile } = useProfiles();
@@ -29,7 +30,7 @@ export function ProfileEntryDialog() {
         <p role="status">{entry.pending ? 'Verificando o PIN…' : ''}</p>
         <div className="directory-actions">
           <Button variant="outline" onClick={() => selectProfile(null)}>Cancelar</Button>
-          <Button type="submit" aria-disabled={entry.pending || undefined}>Desbloquear</Button>
+          <Button type="submit" data-guide="unlock-profile" aria-disabled={entry.pending || undefined}>Desbloquear</Button>
         </div>
       </form>
     </Modal>
@@ -93,7 +94,7 @@ function PinSettings({ onClose }: { onClose: () => void }) {
         </fieldset>
         <p id={errorId} role="alert" className="directory-error">{error}</p>
         <p role="status">{saving ? 'Salvando…' : ''}</p>
-        <div className="directory-actions">
+        <div className="directory-actions" data-guide="pin-actions">
           <Button variant="outline" disabled={saving} onClick={onClose}>Cancelar</Button>
           <Button type="submit" variant={removing ? 'danger' : 'primary'} aria-disabled={saving || undefined}>
             {removing ? 'Confirmar remoção' : 'Salvar PIN'}
@@ -106,7 +107,8 @@ function PinSettings({ onClose }: { onClose: () => void }) {
 
 export function ProfileSecurityActions() {
   const { activeProfile, lockProfile } = useProfiles();
-  const [settings, setSettings] = useState(false);
+  const scene = useGuideScene();
+  const [settings, setSettings] = useState(scene?.panel === 'pin');
   return <>
     {activeProfile?.hasPin && <button type="button" className="profile-tool" aria-label="Bloquear perfil"
       title="Bloquear perfil" onClick={lockProfile}><Lock size={15} aria-hidden="true" /></button>}

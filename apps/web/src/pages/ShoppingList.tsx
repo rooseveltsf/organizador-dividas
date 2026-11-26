@@ -10,6 +10,7 @@ import { Button, Input, Modal, Select } from '../components/ui';
 import { useProfiles, useTransactions } from '../contexts';
 import { moneyPattern, parseMoneyInput } from '../moneyInput';
 import { shoppingListPath } from '../shoppingList';
+import { useGuideScene } from '../tutorial/GuideContext';
 
 type StatementTarget = Pick<Transaction, 'id' | 'date'>;
 type Payment = NonNullable<ShoppingItem['paymentMethod']> | '';
@@ -25,6 +26,7 @@ export function ShoppingList({ profileId, onViewChange, onOpenTransaction, onSim
   onSimulate: (item: ShoppingItem) => void;
 }) {
   const { requestProfileApi } = useProfiles();
+  const scene = useGuideScene();
   const { completeShoppingItem, pendingRows } = useTransactions();
   const heading = useRef<HTMLHeadingElement>(null);
   const inFlight = useRef(false);
@@ -32,12 +34,16 @@ export function ShoppingList({ profileId, onViewChange, onOpenTransaction, onSim
   const [items, setItems] = useState<ShoppingItem[] | null>(null);
   const [failedLoad, setFailedLoad] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [dialog, setDialog] = useState<Dialog | null>(() => {
+    if (scene?.panel === 'shopping-edit') return { kind: 'edit', item: scene.shopping.installments };
+    if (scene?.panel === 'shopping-incomplete') return { kind: 'complete', item: scene.shopping.incomplete, correctAmount: false };
+    return null;
+  });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const awaitingPurchase = Array.from(pendingRows.values()).includes('purchase');
   const hasItems = items !== null;
-  useLayoutEffect(() => { heading.current?.focus(); }, []);
+  useLayoutEffect(() => { if (!scene) heading.current?.focus(); }, [scene]);
 
   useEffect(() => {
     if (awaitingPurchase || hasItems) return;
@@ -133,56 +139,66 @@ export function ShoppingList({ profileId, onViewChange, onOpenTransaction, onSim
     <main className="notebook-page dashboard shopping-page">
       <NotebookProfileHeader />
       <NotebookViews current="shopping" onChange={onViewChange} />
-      <header className="commitments-heading shopping-heading">
-        <h1 ref={heading} tabIndex={-1}>Lista de compras</h1>
-        <Button disabled={busy || items === null} onClick={() => openDialog({ kind: 'edit' })}>
-          <Plus size={17} aria-hidden="true" /> Adicionar item
-        </Button>
-      </header>
-      <p className="transaction-notice" role="status">{notice}</p>
-      {error && !dialog && <p className="transaction-error shopping-message" role="alert">{error}</p>}
-      {items === null && (failedLoad
-        ? <div className="commitments-empty"><p className="transaction-error" role="alert">{loadError}</p>
-          <Button variant="outline" onClick={() => { setFailedLoad(false); setAttempt(previous => previous + 1); }}>
-            Tentar novamente
-          </Button></div>
-        : <p className="commitments-empty" role="status">Carregando lista…</p>)}
-      {items !== null && (
-        <>
-          <section className="shopping-section" aria-labelledby="shopping-planned">
-            <h2 id="shopping-planned">A comprar</h2>
-            {planned.length ? <ul className="shopping-items">{planned.map(item => {
-              const ready = shoppingPurchaseSchema.safeParse(shoppingPurchaseCandidate(item)).success;
-              return (
-                <ItemRow key={item.id} item={item}>
-                  <Button disabled={busy} onClick={() => ready ? complete(item) : openDialog({ kind: 'complete', item, correctAmount: false })}>
-                    Marcar como comprado
-                  </Button>
-                  <Button variant="outline" disabled={busy} onClick={() => onSimulate(item)}>Abrir na Calculadora</Button>
-                  <Button variant="ghost" disabled={busy} onClick={() => openDialog({ kind: 'edit', item })}>Editar</Button>
-                  {ready && <Button variant="ghost" disabled={busy} onClick={() => openDialog({ kind: 'complete', item, correctAmount: true })}>
-                    Corrigir valor e concluir
-                  </Button>}
-                  <Button variant="ghost" disabled={busy} onClick={() => archive(item)}>Arquivar</Button>
-                </ItemRow>
-              );
-            })}</ul> : <p className="commitments-empty">Nenhum item a comprar.</p>}
-          </section>
-          {!!bought.length && <section className="shopping-section" aria-labelledby="shopping-bought">
-            <h2 id="shopping-bought">Comprados</h2>
-            <ul className="shopping-items">{bought.map(item => <ItemRow key={item.id} item={item}>
-              <Button variant="outline" disabled={busy} onClick={() => openStatement(item)}>Ver no Extrato</Button>
-              <Button variant="ghost" disabled={busy} onClick={() => archive(item)}>Arquivar</Button>
-            </ItemRow>)}</ul>
-          </section>}
-          {!!archived.length && <details className="purchase-details shopping-section">
-            <summary>Arquivados</summary>
-            <ul className="shopping-items">{archived.map(item => <ItemRow key={item.id} item={item}>
-              {item.purchasedAt && <Button variant="outline" disabled={busy} onClick={() => openStatement(item)}>Ver no Extrato</Button>}
-            </ItemRow>)}</ul>
-          </details>}
-        </>
-      )}
+      <div className="notebook-sheet">
+        <header className="commitments-heading shopping-heading">
+          <h1 ref={heading} tabIndex={-1}>Lista de compras</h1>
+          <Button data-guide="shopping-add" disabled={busy || items === null} onClick={() => openDialog({ kind: 'edit' })}>
+            <Plus size={17} aria-hidden="true" /> Adicionar item
+          </Button>
+        </header>
+        <p className="transaction-notice" role="status">{notice}</p>
+        {error && !dialog && <p className="transaction-error shopping-message" role="alert">{error}</p>}
+        {items === null && (failedLoad
+          ? <div className="commitments-empty"><p className="transaction-error" role="alert">{loadError}</p>
+            <Button variant="outline" data-guide="shopping-retry" onClick={() => {
+              scene?.recover?.();
+              setFailedLoad(false);
+              setAttempt(previous => previous + 1);
+            }}>
+              Tentar novamente
+            </Button></div>
+          : <p className="commitments-empty" role="status">Carregando lista…</p>)}
+        {items !== null && (
+          <>
+            <section className="shopping-section" aria-labelledby="shopping-planned">
+              <h2 id="shopping-planned">A comprar</h2>
+              {planned.length ? <ul className="shopping-items">{planned.map(item => {
+                const ready = shoppingPurchaseSchema.safeParse(shoppingPurchaseCandidate(item)).success;
+                return (
+                  <ItemRow key={item.id} item={item}>
+                    <Button data-guide={scene ? 'shopping-' + item.id : undefined} disabled={busy}
+                      onClick={() => ready ? complete(item) : openDialog({ kind: 'complete', item, correctAmount: false })}>
+                      Marcar como comprado
+                    </Button>
+                    <Button data-guide={item.id === 'cash' ? 'shopping-simulate' : undefined}
+                      variant="outline" disabled={busy} onClick={() => onSimulate(item)}>Abrir na Calculadora</Button>
+                    <Button variant="ghost" disabled={busy} onClick={() => openDialog({ kind: 'edit', item })}>Editar</Button>
+                    {ready && <Button variant="ghost" disabled={busy} data-guide={item.id === 'cash' ? 'shopping-correct' : undefined}
+                      onClick={() => openDialog({ kind: 'complete', item, correctAmount: true })}>
+                      Corrigir valor e concluir
+                    </Button>}
+                    <Button data-guide={item.id === 'cash' ? 'shopping-archive' : undefined}
+                      variant="ghost" disabled={busy} onClick={() => archive(item)}>Arquivar</Button>
+                  </ItemRow>
+                );
+              })}</ul> : <p className="commitments-empty">Nenhum item a comprar.</p>}
+            </section>
+            {!!bought.length && <section className="shopping-section" aria-labelledby="shopping-bought">
+              <h2 id="shopping-bought">Comprados</h2>
+              <ul className="shopping-items">{bought.map(item => <ItemRow key={item.id} item={item}>
+                <Button variant="outline" disabled={busy} onClick={() => openStatement(item)}>Ver no Extrato</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => archive(item)}>Arquivar</Button>
+              </ItemRow>)}</ul>
+            </section>}
+            {!!archived.length && <details className="purchase-details shopping-section">
+              <summary>Arquivados</summary>
+              <ul className="shopping-items">{archived.map(item => <ItemRow key={item.id} item={item}>
+                {item.purchasedAt && <Button variant="outline" disabled={busy} onClick={() => openStatement(item)}>Ver no Extrato</Button>}
+              </ItemRow>)}</ul>
+            </details>}
+          </>
+        )}
+      </div>
       {dialog?.kind === 'edit' && <EditItem item={dialog.item} onSave={data => save(data, dialog.item)}
         onClose={() => openDialog(null)} busy={busy} error={error} />}
       {dialog?.kind === 'complete' && <ConfirmPurchase item={dialog.item} correctAmount={dialog.correctAmount}

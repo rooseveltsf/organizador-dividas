@@ -1,4 +1,4 @@
-// Prisma Schema para o Organizador de Dívidas
+// Prisma Schema para o Caderno de Dívidas
 // Documentação: https://pris.ly/d/prisma-schema
 
 generator client {

@@ -1,8 +1,9 @@
-import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { Prisma, Profile } from '@prisma/client';
 import type { Request, RequestHandler, Response } from 'express';
 import { profilePinSchema } from '@organizador/shared';
 import { prisma } from './prisma';
+import { matchesPinHash, pinKey } from './pinHash';
 
 const attemptLimit = 5;
 const attemptWindowMs = 5 * 60_000;
@@ -76,16 +77,6 @@ function pinSecret() {
   return Buffer.from(secret, 'hex');
 }
 
-function pinKey(pin: string, salt: Buffer, secret: Buffer): Promise<Buffer> {
-  const keyedPin = createHmac('sha256', secret).update(pin).digest();
-  return new Promise((resolve, reject) => {
-    scrypt(keyedPin, salt, 32, { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 }, (error, key) => {
-      if (error) reject(error);
-      else resolve(key);
-    });
-  });
-}
-
 export async function hashPin(pin: string) {
   const salt = randomBytes(16);
   const hash = await pinKey(pin, salt, pinSecret());
@@ -124,10 +115,7 @@ export async function verifyPin(profileId: string, expectedHash: string, input: 
     }
   }
 
-  const stored = /^scrypt-v1:([0-9a-f]{32}):([0-9a-f]{64})$/.exec(expectedHash);
-  if (!stored) throw new Error('Formato de hash inválido.');
-  const actual = await pinKey(pin.data, Buffer.from(stored[1], 'hex'), secret);
-  if (!timingSafeEqual(actual, Buffer.from(stored[2], 'hex'))) {
+  if (!await matchesPinHash(pin.data, expectedHash, secret)) {
     if (reservation.pinAttempts >= attemptLimit) throw waitError(reservation.pinAttemptUntil!);
     throw new ProfileAccessError(401, 'PROFILE_PIN_INVALID', 'PIN incorreto.');
   }

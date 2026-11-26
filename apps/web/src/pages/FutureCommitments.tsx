@@ -8,6 +8,7 @@ import { NotebookViews, type NotebookView } from '../components/NotebookViews';
 import { Button } from '../components/ui';
 import { useProfiles, useTransactions } from '../contexts';
 import { COMMITMENT_CATEGORIES, summarizeCommitments, type CommitmentCategory } from '../futureCommitments';
+import { useGuideScene } from '../tutorial/GuideContext';
 
 const labels: Record<CommitmentCategory, { singular: string; plural: string }> = {
   fixed: { singular: 'Fixa', plural: 'Fixas' },
@@ -31,9 +32,10 @@ type FutureCommitmentsProps = {
 
 export function FutureCommitments({ onViewChange, ...monthProps }: FutureCommitmentsProps) {
   const { activeProfile } = useProfiles();
+  const scene = useGuideScene();
   const heading = useRef<HTMLHeadingElement>(null);
 
-  useLayoutEffect(() => { heading.current?.focus(); }, []);
+  useLayoutEffect(() => { if (!scene) heading.current?.focus(); }, [scene]);
 
   if (!activeProfile) return null;
   return (
@@ -41,18 +43,21 @@ export function FutureCommitments({ onViewChange, ...monthProps }: FutureCommitm
       <NotebookProfileHeader />
       <NotebookViews current="future" onChange={onViewChange} />
 
-      <header className="commitments-heading">
-        <h1 ref={heading} tabIndex={-1}>Compromissos futuros</h1>
-        <p>Despesas fixas, recorrentes e parceladas cadastradas para cada mês futuro.</p>
-      </header>
+      <div className="notebook-sheet">
+        <header className="commitments-heading">
+          <h1 ref={heading} tabIndex={-1}>Compromissos futuros</h1>
+          <p>Despesas fixas, recorrentes e parceladas cadastradas para cada mês futuro.</p>
+        </header>
 
-      <FutureMonth key={activeProfile.id} profileId={activeProfile.id} {...monthProps} />
+        <FutureMonth key={activeProfile.id} profileId={activeProfile.id} {...monthProps} />
+      </div>
     </main>
   );
 }
 
 function FutureMonth({ profileId, month, onMonthChange, onOpenTransaction }:
   Omit<FutureCommitmentsProps, 'onViewChange'> & { profileId: string }) {
+  const scene = useGuideScene();
   const firstMonth = firstFutureMonth();
   const selectedMonth = month < firstMonth ? firstMonth : month;
   const { pendingRows } = useTransactions();
@@ -107,7 +112,8 @@ function FutureMonth({ profileId, month, onMonthChange, onOpenTransaction }:
       {result && 'error' in result && (
         <div className="commitments-empty">
           <p className="transaction-error" role="alert">{loadError}</p>
-          <Button variant="outline" onClick={() => {
+          <Button variant="outline" data-guide="future-retry" onClick={() => {
+            scene?.recover?.();
             periodHeading.current?.focus();
             setResult(null);
             setAttempt((previous) => previous + 1);

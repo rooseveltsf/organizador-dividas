@@ -1,0 +1,13 @@
+{
+  "name": "@organizador/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node scripts/start.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.0"
+  }
+}

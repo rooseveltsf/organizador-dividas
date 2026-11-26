@@ -9,6 +9,7 @@ import { NotebookViews, type NotebookView } from '../components/NotebookViews';
 import { TransactionForm } from '../components/TransactionForm';
 import { PayslipImportModal } from '../components/PayslipImportModal';
 import { formatDate, MONTH_NAMES } from '../calendar';
+import { useGuideScene } from '../tutorial/GuideContext';
 import type { Transaction } from '@organizador/shared';
 import { css } from '@/styled-system/css';
 import {
@@ -20,8 +21,6 @@ import {
   ArrowLeftRight,
   Plus,
   Pencil,
-  CheckCircle2,
-  Clock,
   AlertTriangle,
   AlertCircle,
   FileText,
@@ -97,6 +96,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   entryNotice, onProfileSwitch, onProfileDeleted, onViewChange, transactionTarget, onTransactionLocated,
 }) => {
   const { activeProfile, selectProfile, deleteProfile } = useProfiles();
+  const scene = useGuideScene();
   const {
     transactions,
     isLoading,
@@ -113,16 +113,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const [activeTab, setActiveTab] = useState<TypeFilter>('all');
   const [situation, setSituation] = useState('all');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(scene?.filters ? 'sem resultados' : '');
   const [statusErrors, setStatusErrors] = useState(new Map<string, string>());
   const [deleteError, setDeleteError] = useState('');
   const [savedNotice, setSavedNotice] = useState('');
-  const [editor, setEditor] = useState<Editor | null>(null);
+  const [editor, setEditor] = useState<Editor | null>(() => {
+    return scene?.panel === 'expense' || scene?.panel === 'light' || scene?.panel === 'installment'
+      ? { type: 'expense' } : null;
+  });
   const [isSavingTransaction, setIsSavingTransaction] = useState(false);
-  const [deletingTransaction, setDeletingTransaction] = useState<Transaction | null>(null);
+  const [deletingTransaction, setDeletingTransaction] = useState<Transaction | null>(
+    scene?.panel === 'delete-series' ? scene.installment : null,
+  );
   const [isDeletingTransaction, setIsDeletingTransaction] = useState(false);
-  const [isPayslipModalOpen, setIsPayslipModalOpen] = useState(false);
-  const [isDeleteProfileModalOpen, setIsDeleteProfileModalOpen] = useState(false);
+  const [isPayslipModalOpen, setIsPayslipModalOpen] = useState(Boolean(scene?.panel?.startsWith('pdf-')));
+  const [isDeleteProfileModalOpen, setIsDeleteProfileModalOpen] = useState(scene?.panel === 'delete-profile');
   const [isDeletingProfile, setIsDeletingProfile] = useState(false);
   const [profileDeleteError, setProfileDeleteError] = useState('');
   const [profileDeletePin, setProfileDeletePin] = useState(emptyPin);
@@ -139,7 +144,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   }, [view]);
 
   useLayoutEffect(() => {
-    monthHeading.current?.focus();
+    if (!scene) monthHeading.current?.focus();
   }, []);
 
   useLayoutEffect(() => {
@@ -164,7 +169,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   }, [transactionTarget, hasMonthData, isLoading, loadError, onTransactionLocated]);
 
   const now = new Date();
-  const today = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
+  const today = scene?.today ?? [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
   const period = MONTH_NAMES[selectedMonth - 1] + ' de ' + selectedYear;
   const query = searchable(search);
   const visibleTransactions = transactions.filter((tx) => {
@@ -247,7 +252,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {activeProfile.name}
           </span>
         )}
-        <Button variant="outline" size="sm" onClick={() => {
+        <Button variant="outline" size="sm" data-guide="switch-profile" onClick={() => {
           onProfileSwitch();
           selectProfile(null);
         }}><ArrowLeftRight size={14} aria-hidden="true" /> Trocar perfil</Button>
@@ -261,39 +266,44 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </NotebookHeader>
       <NotebookViews current="statement" onChange={onViewChange} />
 
-      <header className="month-header">
-        <div className="month-nav">
-          <h1 ref={monthHeading} tabIndex={-1}><span className="sr-only">Perfil {activeProfile?.name}. </span>{MONTH_NAMES[selectedMonth - 1]} <em>{selectedYear}</em></h1>
-          <nav className="month-arrows" aria-label="Navegação mensal">
-            <button onClick={() => changeMonth(-1)} aria-label="Mês anterior"><ChevronLeft size={17} aria-hidden="true" /></button>
-            <button onClick={() => changeMonth(1)} aria-label="Próximo mês"><ChevronRight size={17} aria-hidden="true" /></button>
-          </nav>
-        </div>
-        <div className="month-actions">
-          <Button onClick={(event) => openEditor(event, { type: 'expense' })}><Plus size={16} aria-hidden="true" /> Nova despesa</Button>
-          <Button variant="outline" onClick={(event) => openEditor(event, { type: 'income' })}><Plus size={16} aria-hidden="true" /> Nova receita</Button>
-          <Button variant="ghost" onClick={(event) => {
-            event.currentTarget.focus();
-            setIsPayslipModalOpen(true);
-          }}><FileText size={16} aria-hidden="true" /> Importar contracheque</Button>
-        </div>
-      </header>
-
-      <p role="status" className="transaction-notice">{savedNotice}</p>
-      <MonthlySummary transactions={transactions} unavailableReason={loadError ? 'Resumo indisponível.' : hasMonthData ? undefined : 'Aguardando os lançamentos do mês.'} />
-
-      <section className="ledger" aria-labelledby="ledger-title">
-        <div className="ledger-heading">
-          <div>
-            <h2 id="ledger-title" ref={ledgerHeading} tabIndex={-1}>Extrato do mês</h2>
-            {hasMonthData && transactions.length > 0 && (
-              <p className="attention-summary">
-                {openCount ? openCount + ' em aberto' : 'Todos os lançamentos estão realizados'}
-                {overdueCount > 0 && <span><AlertTriangle size={14} aria-hidden="true" />{overdueCount} {overdueCount === 1 ? 'despesa em atraso' : 'despesas em atraso'}</span>}
-              </p>
-            )}
+      <div className="notebook-sheet">
+        <header className="month-header">
+          <div className="month-nav">
+            <h1 ref={monthHeading} tabIndex={-1}>
+              <span className="sr-only">Perfil {activeProfile?.name}. </span>
+              <span className="month-name">{MONTH_NAMES[selectedMonth - 1]}</span>{' '}
+              <span className="month-year">{selectedYear}</span>
+            </h1>
+            <nav className="month-arrows" aria-label="Navegação mensal">
+              <button onClick={() => changeMonth(-1)} aria-label="Mês anterior"><ChevronLeft size={17} aria-hidden="true" /></button>
+              <button onClick={() => changeMonth(1)} aria-label="Próximo mês"><ChevronRight size={17} aria-hidden="true" /></button>
+            </nav>
           </div>
-        </div>
+          <div className="month-actions">
+            <Button data-guide="expense" onClick={(event) => openEditor(event, { type: 'expense' })}><Plus size={16} aria-hidden="true" /> Nova despesa</Button>
+            <Button data-guide="income" variant="outline" onClick={(event) => openEditor(event, { type: 'income' })}><Plus size={16} aria-hidden="true" /> Nova receita</Button>
+            <Button variant="ghost" onClick={(event) => {
+              event.currentTarget.focus();
+              setIsPayslipModalOpen(true);
+            }}><FileText size={16} aria-hidden="true" /> Importar contracheque</Button>
+          </div>
+        </header>
+
+        <p role="status" className="transaction-notice">{savedNotice}</p>
+        <MonthlySummary transactions={transactions} unavailableReason={loadError ? 'Resumo indisponível.' : hasMonthData ? undefined : 'Aguardando os lançamentos do mês.'} />
+
+        <section className="ledger" aria-labelledby="ledger-title">
+          <div className="ledger-heading">
+            <div>
+              <h2 id="ledger-title" ref={ledgerHeading} tabIndex={-1}>Extrato do mês</h2>
+              {hasMonthData && transactions.length > 0 && (
+                <p className="attention-summary">
+                  {openCount ? openCount + ' em aberto' : 'Todos os lançamentos estão realizados'}
+                  {overdueCount > 0 && <span><AlertTriangle size={14} aria-hidden="true" />{overdueCount} {overdueCount === 1 ? 'despesa em atraso' : 'despesas em atraso'}</span>}
+                </p>
+              )}
+            </div>
+          </div>
           <div className="ledger-filters">
             <div className="ledger-tabs" role="group" aria-label="Tipo de lançamento">
               {([['all', 'Todos'], ['expense', 'Despesas'], ['income', 'Receitas']] as const).map(([type, label]) => (
@@ -315,96 +325,112 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </label>
           </div>
 
-        {Array.from(statusErrors, ([id, message]) => <p key={id} role="alert" className="transaction-error">{message}</p>)}
-        {loadError && (
-          <div className={transactions.length ? undefined : 'ledger-empty'}>
-            <p role="alert" className="transaction-error">
-              {loadError}{transactions.length > 0 && ' Mostrando os últimos dados carregados.'}
-            </p>
-            <Button variant="outline" size="sm" aria-disabled={isLoading || undefined} onClick={async (event) => {
-              if (isLoading) return;
-              restoreLedgerFocus.current = document.activeElement === event.currentTarget;
-              await fetchTransactions();
-            }}>Tentar carregar {period} novamente</Button>
-          </div>
-        )}
-        {!hasMonthData && !loadError && (
-          <div className="ledger-empty">Carregando lançamentos de {period}…</div>
-        )}
-        {hasMonthData && (!loadError || transactions.length > 0) && (visibleTransactions.length === 0 ? (
-          <div className="ledger-empty">
-            <Layers size={26} strokeWidth={1.5} aria-hidden="true" />
-            <p className="empty-title">{transactions.length ? 'Nenhum lançamento com estes filtros.' : 'Nenhum lançamento em ' + period + '.'}</p>
-            {transactions.length ? (
-              <Button variant="outline" size="sm" onClick={clearFilters}>Limpar filtros</Button>
-            ) : <div className="ledger-empty-actions">
-              <Button variant="outline" size="sm" onClick={(event) => openEditor(event, { type: 'expense' })}>Nova despesa</Button>
-              <Button variant="outline" size="sm" onClick={(event) => openEditor(event, { type: 'income' })}>Nova receita</Button>
-            </div>}
-          </div>
-        ) : (
-          <table className="ledger-table" role="table" aria-label={'Lançamentos de ' + period}>
-            <thead role="rowgroup"><tr role="row">
-              <th role="columnheader" scope="col">Descrição</th><th role="columnheader" scope="col">Data prevista</th><th role="columnheader" scope="col">Situação</th>
-              <th role="columnheader" scope="col" className="amount-heading">Valor</th><th role="columnheader" scope="col" className="actions-heading">Ações</th>
-            </tr></thead>
-            <tbody role="rowgroup">{visibleTransactions.map((tx) => {
-              const paid = tx.status === 'paid';
-              const income = tx.type === 'income';
-              const overdue = overdueExpense(tx, today);
-              const status = paid ? (income ? 'Recebido' : 'Pago') : overdue ? 'Vencido' : 'Pendente';
-              const action = paid ? (income ? 'Marcar como a receber' : 'Marcar como pendente') : income ? 'Marcar como recebido' : 'Marcar como pago';
-              const StatusIcon = paid ? CheckCircle2 : overdue ? AlertCircle : Clock;
-              const operation = pendingRows.get(tx.id);
+          {Array.from(statusErrors, ([id, message]) => <p key={id} role="alert" className="transaction-error">{message}</p>)}
+          {loadError && (
+            <div className={transactions.length ? undefined : 'ledger-empty'}>
+              <p role="alert" className="transaction-error">
+                {loadError}{transactions.length > 0 && ' Mostrando os últimos dados carregados.'}
+              </p>
+              <Button variant="outline" size="sm" data-guide="retry-statement" aria-disabled={isLoading || undefined} onClick={async (event) => {
+                if (isLoading) return;
+                scene?.recover?.();
+                restoreLedgerFocus.current = document.activeElement === event.currentTarget;
+                await fetchTransactions();
+              }}>Tentar carregar {period} novamente</Button>
+            </div>
+          )}
+          {!hasMonthData && !loadError && (
+            <div className="ledger-empty">Carregando lançamentos de {period}…</div>
+          )}
+          {hasMonthData && (!loadError || transactions.length > 0) && (visibleTransactions.length === 0 ? (
+            <div className={transactions.length ? 'ledger-empty' : 'ledger-empty ledger-blank'}>
+              {transactions.length > 0 && <Layers size={26} strokeWidth={1.5} aria-hidden="true" />}
+              <p className="empty-title">{transactions.length ? 'Nenhum lançamento com estes filtros.' : 'Nenhum lançamento em ' + period + '.'}</p>
+              {transactions.length ? (
+                <Button variant="outline" size="sm" data-guide="filters" onClick={clearFilters}>Limpar filtros</Button>
+              ) : <div className="ledger-empty-actions">
+                <Button variant="outline" size="sm" onClick={(event) => openEditor(event, { type: 'expense' })}>Nova despesa</Button>
+                <Button variant="outline" size="sm" onClick={(event) => openEditor(event, { type: 'income' })}>Nova receita</Button>
+              </div>}
+            </div>
+          ) : (
+            <table className="ledger-table" role="table" aria-label={'Lançamentos de ' + period}>
+              <thead role="rowgroup"><tr role="row">
+                <th role="columnheader" scope="col">Descrição</th><th role="columnheader" scope="col" className="date-heading">Data prevista</th><th role="columnheader" scope="col" className="state-heading">Situação</th>
+                <th role="columnheader" scope="col" className="amount-heading">Valor</th><th role="columnheader" scope="col" className="actions-heading">Ações</th>
+              </tr></thead>
+              <tbody role="rowgroup">{visibleTransactions.map((tx) => {
+                const paid = tx.status === 'paid';
+                const income = tx.type === 'income';
+                const overdue = overdueExpense(tx, today);
+                const status = paid ? (income ? 'Recebido' : 'Pago') : overdue ? 'Vencido' : 'Pendente';
+                const action = paid ? (income ? 'Marcar como a receber' : 'Marcar como pendente') : income ? 'Marcar como recebido' : 'Marcar como pago';
+                const operation = pendingRows.get(tx.id);
+                const updating = operation === 'status';
+                const paymentDate = paid && !updating ? tx.paymentDate?.slice(0, 10) : undefined;
 
-              return (
-                <tr key={tx.id} className="ledger-row" role="row" tabIndex={-1}
-                  ref={tx.id === transactionTarget ? targetRow : undefined}>
-                  <th role="rowheader" scope="row" className="tx-description">
-                    <strong>{tx.description}</strong>
-                    <small>{income ? 'Receita' : 'Despesa'} · {CATEGORY_TRANSLATIONS[tx.category] || tx.category}
-                      {tx.currentInstallment != null && tx.totalInstallments != null && <span> · Parcela {tx.currentInstallment}/{tx.totalInstallments}</span>}
-                    </small>
-                  </th>
-                  <td role="cell" className="tx-date"><span>{formatDate(tx.date)}</span>
-                    {tx.paymentDate && <small>{income ? 'Recebido' : 'Pago'} em {formatDate(tx.paymentDate)}</small>}
-                  </td>
-                  <td role="cell" className="tx-state">
-                    <button className={'settle-button ' + (paid ? 'paid' : overdue ? 'overdue' : '')}
-                      title={action} aria-label={status + ' — ' + action + ' — ' + tx.description}
-                      aria-busy={operation === 'status' || undefined} aria-disabled={Boolean(operation) || undefined}
-                      onClick={(event) => void changeStatus(event, tx)}>
-                      <StatusIcon size={15} aria-hidden="true" />{operation === 'status' ? 'Alterando…' : status}
-                    </button>
-                  </td>
-                  <td role="cell" className={income ? 'tx-amount income' : 'tx-amount'}>{income ? '+' : '−'} {formatCurrency(tx.amount || 0)}</td>
-                  <td role="cell" className="tx-actions">
-                    <Button size="sm" variant="ghost" aria-label={'Editar ' + tx.description} title="Editar lançamento"
-                      disabled={Boolean(operation)} onClick={(event) => openEditor(event, { type: tx.type, transaction: tx })}><Pencil size={15} aria-hidden="true" /></Button>
-                    <Button size="sm" variant="ghost" aria-label={'Excluir ' + tx.description} title="Excluir lançamento"
-                      disabled={Boolean(operation)}
-                      onClick={(event) => {
-                        event.currentTarget.focus();
-                        setSavedNotice('');
-                        setDeleteError('');
-                        setDeletingTransaction(tx);
-                      }}><Trash2 size={15} aria-hidden="true" /></Button>
-                  </td>
-                </tr>
-              );
-            })}</tbody>
-          </table>
-        ))}
-        <p className={hasMonthData && transactions.length && !loadError ? 'ledger-count' : 'sr-only'} role="status">
-          {isLoading ? (
-            hasMonthData ? 'Atualizando lançamentos de ' + period + '.' : 'Carregando lançamentos de ' + period + '.'
-          ) : hasMonthData && !loadError ? (
-            transactions.length
-              ? visibleTransactions.length + ' de ' + transactions.length + ' lançamentos em ' + period + (visibleTransactions.length ? '.' : '. Nenhum lançamento com estes filtros.')
-              : 'Nenhum lançamento em ' + period + '.'
-          ) : ''}
-        </p>
-      </section>
+                return (
+                  <tr key={tx.id} className="ledger-row" role="row" tabIndex={-1}
+                    data-guide={scene && tx.id === 'guide-light' ? 'light' : undefined}
+                    ref={tx.id === transactionTarget ? targetRow : undefined}>
+                    <th role="rowheader" scope="row" className="tx-description">
+                      <strong>{tx.description}</strong>
+                      <small>{tx.currentInstallment != null && tx.totalInstallments != null
+                        ? <>Parcela {tx.currentInstallment}/{tx.totalInstallments}</>
+                        : <>{income ? 'Receita' : 'Despesa'} · {CATEGORY_TRANSLATIONS[tx.category] || tx.category}</>}
+                      </small>
+                    </th>
+                    <td role="cell" className={overdue ? 'tx-date overdue' : 'tx-date'}>
+                      <span className="tx-date-line">
+                        {overdue && <AlertCircle size={13} aria-hidden="true" />}
+                        <span><span className="tx-date-label">{income ? 'Previsto para' : 'Vence em'} </span>
+                          <time dateTime={tx.date.slice(0, 10)}>{formatDate(tx.date)}</time>
+                        </span>
+                      </span>
+                    </td>
+                    <td role="cell" className="tx-state">
+                      <button className={'settle-button ' + (paid ? 'paid' : overdue ? 'overdue' : '')}
+                        title={action} aria-label={status + ' — ' + action + ' — ' + tx.description}
+                        aria-describedby={paymentDate ? 'payment-date-' + tx.id : undefined}
+                        aria-busy={updating || undefined} aria-disabled={Boolean(operation) || undefined}
+                        onClick={(event) => void changeStatus(event, tx)}>
+                        {paid && !updating && <span className="settled-check" aria-hidden="true" />}
+                        <span>{updating ? 'Alterando…' : status}
+                          {paymentDate && <span className="tx-payment-date" id={'payment-date-' + tx.id}>
+                            {' em '}<time dateTime={paymentDate}>{formatDate(paymentDate)}</time>
+                          </span>}
+                        </span>
+                      </button>
+                    </td>
+                    <td role="cell" className={income ? 'tx-amount income' : 'tx-amount'}>{income ? '+' : '−'} {formatCurrency(tx.amount || 0)}</td>
+                    <td role="cell" className="tx-actions">
+                      <Button size="sm" variant="ghost" aria-label={'Editar ' + tx.description} title="Editar lançamento"
+                        disabled={Boolean(operation)} onClick={(event) => openEditor(event, { type: tx.type, transaction: tx })}><Pencil size={15} aria-hidden="true" /></Button>
+                      <Button size="sm" variant="ghost" aria-label={'Excluir ' + tx.description} title="Excluir lançamento"
+                        disabled={Boolean(operation)}
+                        onClick={(event) => {
+                          event.currentTarget.focus();
+                          setSavedNotice('');
+                          setDeleteError('');
+                          setDeletingTransaction(tx);
+                        }}><Trash2 size={15} aria-hidden="true" /></Button>
+                    </td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+          ))}
+          <p className={hasMonthData && transactions.length && !loadError ? 'ledger-count' : 'sr-only'} role="status">
+            {isLoading ? (
+              hasMonthData ? 'Atualizando lançamentos de ' + period + '.' : 'Carregando lançamentos de ' + period + '.'
+            ) : hasMonthData && !loadError ? (
+              transactions.length
+                ? visibleTransactions.length + ' de ' + transactions.length + ' lançamentos em ' + period + (visibleTransactions.length ? '.' : '. Nenhum lançamento com estes filtros.')
+                : 'Nenhum lançamento em ' + period + '.'
+            ) : ''}
+          </p>
+        </section>
+      </div>
 
       {/* Modal Customizado de Confirmação de Exclusão (Substituindo window.confirm) */}
       <Modal
@@ -432,7 +458,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </div>
                 </div>
 
-                <div className={modalGroupSeriesActionsStyle}>
+                <div className={modalGroupSeriesActionsStyle} data-guide="delete-series">
                   <Button
                     type="button"
                     variant="danger"
@@ -528,7 +554,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         description="Esta ação é permanente e não poderá ser desfeita"
       >
         {activeProfile && (
-          <form className={css({ display: 'flex', flexDirection: 'column', gap: '4' })} onSubmit={async event => {
+          <form data-guide="delete-profile" className={css({ display: 'flex', flexDirection: 'column', gap: '4' })} onSubmit={async event => {
             event.preventDefault();
             if (isDeletingProfile) return;
             setIsDeletingProfile(true);
