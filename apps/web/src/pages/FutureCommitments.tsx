@@ -3,10 +3,9 @@ import { CalendarDays, ChevronLeft, ChevronRight, List } from 'lucide-react';
 import type { Transaction } from '@organizador/shared';
 import { firstFutureMonth, formatDate, monthLabel, shiftMonth } from '../calendar';
 import { formatCurrency, formatCurrencyCents } from '../components/MonthlySummary';
-import { NotebookHeader } from '../components/NotebookHeader';
-import { ProfileSecurityActions } from '../components/ProfilePin';
+import { NotebookProfileHeader } from '../components/NotebookHeader';
 import { NotebookViews, type NotebookView } from '../components/NotebookViews';
-import { Button, Select } from '../components/ui';
+import { Button } from '../components/ui';
 import { useProfiles, useTransactions } from '../contexts';
 import { COMMITMENT_CATEGORIES, summarizeCommitments, type CommitmentCategory } from '../futureCommitments';
 
@@ -31,7 +30,7 @@ type FutureCommitmentsProps = {
 };
 
 export function FutureCommitments({ onViewChange, ...monthProps }: FutureCommitmentsProps) {
-  const { activeProfile, profiles, selectProfile } = useProfiles();
+  const { activeProfile } = useProfiles();
   const heading = useRef<HTMLHeadingElement>(null);
 
   useLayoutEffect(() => { heading.current?.focus(); }, []);
@@ -39,18 +38,7 @@ export function FutureCommitments({ onViewChange, ...monthProps }: FutureCommitm
   if (!activeProfile) return null;
   return (
     <main className="notebook-page dashboard commitments-page">
-      <NotebookHeader>
-        <span className="profile-monogram mini" aria-hidden="true">{activeProfile.avatarInitials}</span>
-        <div className="commitments-profile">
-          <Select aria-label="Perfil" size="lg" value={activeProfile.id} onChange={(event) => {
-            const profile = profiles.find((item) => item.id === event.target.value);
-            if (profile) selectProfile(profile);
-          }}>
-            {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-          </Select>
-        </div>
-        <ProfileSecurityActions />
-      </NotebookHeader>
+      <NotebookProfileHeader />
       <NotebookViews current="future" onChange={onViewChange} />
 
       <header className="commitments-heading">

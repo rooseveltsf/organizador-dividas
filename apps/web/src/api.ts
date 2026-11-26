@@ -16,7 +16,7 @@ export async function requestApi<T>(
     if (token) headers.set('Authorization', 'Bearer ' + token);
     const response = await fetch(apiBaseUrl + path, { ...init, headers, cache: 'no-store' });
     const result: ApiResponse<T> & { code?: string } = await response.json();
-    if (!response.ok && result?.code?.startsWith('PROFILE_') && result.message) {
+    if (!response.ok && result?.code && result.message) {
       throw new ApiError(result.message, result.code);
     }
     if (!response.ok) throw new Error();

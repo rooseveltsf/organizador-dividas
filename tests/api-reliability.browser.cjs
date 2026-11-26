@@ -550,6 +550,12 @@ test('PIN no navegador isola trocas rápidas, restauração, expiração e bloqu
           window.releaseUnlock = () => resolve(response);
         }));
       }
+      if (window.holdPurchase && options?.method === 'POST' && String(url).endsWith('/complete')) {
+        window.holdPurchase = false;
+        return new Promise(resolve => {
+          window.releasePurchase = () => resolve(originalFetch(url, options));
+        });
+      }
       return originalFetch(url, options);
     };
   ` });
@@ -693,6 +699,100 @@ test('PIN no navegador isola trocas rápidas, restauração, expiração e bloqu
   await absent('Lançamento privado de Alfa');
   await submitPin('0007');
   await visible('Lançamento privado de Alfa');
+
+  await t.test('Lista de compras preenche a Calculadora e integra a compra ao Extrato e aos Compromissos', async () => {
+    const name = 'Cadeira de teste';
+    const firstDue = nextMonth.toISOString().slice(0, 10);
+    const month = firstDue.slice(0, 7);
+    async function setField(label, value) {
+      const expression = `[...document.querySelectorAll('label')].find(label => label.textContent.trim() === ${JSON.stringify(label)})?.control`;
+      await waitFor(() => evaluate(`Boolean(${expression})`), label);
+      await evaluate(`(() => {
+        const control = ${expression};
+        Object.getOwnPropertyDescriptor(Object.getPrototypeOf(control), 'value').set.call(control, ${JSON.stringify(value)});
+        control.dispatchEvent(new Event(control.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+      })()`);
+    }
+
+    await click('Lista de compras');
+    await visible('Nenhum item a comprar.');
+    await click('Adicionar item');
+    await setField('Nome do item', name);
+    await setField('Preço estimado (opcional)', '129,99');
+    await setField('Forma de pagamento (opcional)', 'installments');
+    await setField('Quantidade de parcelas (opcional)', '3');
+    await click('Salvar item');
+    await visible('Item adicionado à Lista de compras.');
+    await click('Abrir na Calculadora');
+    await waitFor(() => evaluate(`document.querySelector('input[name="product"]')?.value === ${JSON.stringify(name)}`), 'produto preenchido');
+    assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('.purchase-fields [name]'), field => field.value)`),
+      [name, '129.99', 'installments', '3', '']);
+    await setField('Primeiro vencimento', firstDue);
+    await visible('Sobra mensal projetada');
+    assert.equal(await prisma.transaction.count({ where: { description: name } }), 0);
+
+    await click('Lista de compras');
+    await visible(name);
+    await click('Marcar como comprado');
+    await visible('Confirmar compra');
+    assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('dialog[open] label'), label => label.textContent.trim())`),
+      ['Primeiro vencimento']);
+    await click('Corrigir valor');
+    await setField('Valor real da compra (R$)', '100');
+    await setField('Primeiro vencimento', firstDue);
+    await evaluate(`(() => {
+      const confirm = document.querySelector('dialog[open] button[type="submit"]');
+      confirm.click();
+      confirm.click();
+    })()`);
+    await visible('Compra registrada no Extrato.');
+    assert.equal(await prisma.transaction.count({ where: { description: name } }), 3);
+    assert.ok(await evaluate(`document.querySelector('#shopping-bought + ul').textContent.includes('100,00')`));
+    await click('Ver no Extrato');
+    await visible(name);
+    await waitFor(() => evaluate(`document.activeElement.textContent.includes(${JSON.stringify(name)})`), 'foco no lançamento');
+
+    await click('Compromissos futuros');
+    await visible(name);
+    await click('Simular compra');
+    await setField('Valor total da oferta (R$)', '1');
+    await visible('Sobra mensal projetada');
+    const cells = await evaluate(`Array.from(document.querySelectorAll('tr[data-month="${month}"] td'), cell => cell.textContent)`);
+    assert.match(cells[1], /48,34/);
+    assert.match(cells[2], /0,00/);
+    assert.equal(await evaluate(`document.querySelector('input[name="product"]').value`), '');
+
+    await click('Lista de compras');
+    await visible(name);
+    await evaluate(`document.querySelector('#shopping-bought + ul button:last-child').click()`);
+    await visible('Item arquivado.');
+    assert.equal(await prisma.transaction.count({ where: { description: name } }), 3);
+
+    const cashName = 'Caneca de teste';
+    await click('Adicionar item');
+    await setField('Nome do item', cashName);
+    await setField('Preço estimado (opcional)', '25');
+    await setField('Forma de pagamento (opcional)', 'cash');
+    await setField('Data do pagamento (opcional)', thisMonth.toISOString().slice(0, 10));
+    await click('Salvar item');
+    await visible(cashName);
+    await evaluate('window.holdPurchase = true');
+    await click('Marcar como comprado');
+    await waitFor(() => evaluate('Boolean(window.releasePurchase)'), 'pedido de compra à vista pendente');
+    await click('Extrato');
+    await click('Lista de compras');
+    await visible('Carregando lista…');
+    await evaluate('window.releasePurchase()');
+    await waitFor(() => evaluate(`document.querySelector('#shopping-bought + ul')?.textContent.includes(${JSON.stringify(cashName)})`),
+      'compra à vista atualizada ao voltar à lista');
+    const cashRows = await prisma.transaction.findMany({ where: { description: cashName } });
+    assert.equal(cashRows.length, 1);
+    assert.equal(cashRows[0].status, 'paid');
+    assert.equal(cashRows[0].date.toISOString().slice(0, 10), thisMonth.toISOString().slice(0, 10));
+    assert.deepEqual(cashRows[0].paymentDate, cashRows[0].date);
+    await click('Extrato');
+  });
+
   await click('Bloquear perfil');
   await visible('Perfil bloqueado.');
   await absent('Lançamento privado de Alfa');

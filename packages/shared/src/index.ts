@@ -323,6 +323,77 @@ export const createTransactionSchema = createTransactionFields.extend({
   repeatMonths: seriesLength.default(12),
 }).superRefine((item, ctx) => validateProjection(item, item.repeatMonths, ctx));
 
+const shoppingPaymentMethod = z.enum(['cash', 'installments'], { error: 'Informe a forma de pagamento.' });
+const shoppingDate = z.iso.date({ error: 'Informe uma data válida.' });
+const shoppingInstallments = z.number().int().min(1).max(MAX_SERIES_LENGTH);
+
+export const shoppingItemSchema = z.object({
+  name: z.string().trim().min(1, 'Informe o nome do item.').max(200),
+  estimatedAmount: amountSchema.nullable().optional(),
+  paymentMethod: shoppingPaymentMethod.nullable().optional(),
+  installmentCount: shoppingInstallments.nullable().optional(),
+  scheduledDate: shoppingDate.nullable().optional(),
+}).transform(item => ({
+  name: item.name,
+  estimatedAmount: item.estimatedAmount ?? null,
+  paymentMethod: item.paymentMethod ?? null,
+  installmentCount: item.paymentMethod === 'installments' ? item.installmentCount ?? null : null,
+  scheduledDate: item.paymentMethod ? item.scheduledDate ?? null : null,
+}));
+
+const shoppingPurchaseFields = z.object({
+  amount: amountSchema,
+  paymentMethod: shoppingPaymentMethod,
+  installmentCount: shoppingInstallments.nullable(),
+  date: shoppingDate,
+});
+
+export const shoppingPurchaseSchema = shoppingPurchaseFields.superRefine((purchase, ctx) => {
+  if (purchase.paymentMethod === 'cash') return;
+  const count = purchase.installmentCount;
+  if (count == null) {
+    ctx.addIssue({ code: 'custom', path: ['installmentCount'], message: 'Informe a quantidade de parcelas.' });
+    return;
+  }
+  validateProjection({
+    type: 'expense', category: 'installment', status: 'pending', amount: purchase.amount, amountMode: 'total',
+    description: '', date: purchase.date, totalInstallments: count,
+  }, 1, ctx);
+});
+
+export const shoppingPurchaseOverridesSchema = shoppingPurchaseFields.partial();
+
+export type ShoppingItemInput = z.input<typeof shoppingItemSchema>;
+export type ShoppingPurchaseOverrides = z.input<typeof shoppingPurchaseOverridesSchema>;
+
+export interface ShoppingItem extends z.output<typeof shoppingItemSchema> {
+  id: string;
+  profileId: string;
+  actualAmount: number | null;
+  actualPaymentMethod: z.infer<typeof shoppingPaymentMethod> | null;
+  actualInstallmentCount: number | null;
+  actualDate: string | null;
+  transactionId: string | null;
+  groupId: string | null;
+  createdAt: string;
+  purchasedAt: string | null;
+  archivedAt: string | null;
+}
+
+export function shoppingPurchaseCandidate(
+  item: z.output<typeof shoppingItemSchema>, overrides: ShoppingPurchaseOverrides = {},
+) {
+  const paymentMethod = overrides.paymentMethod ?? item.paymentMethod;
+  const sameMethod = paymentMethod === item.paymentMethod;
+  return {
+    amount: overrides.amount ?? item.estimatedAmount,
+    paymentMethod,
+    installmentCount: paymentMethod === 'installments'
+      ? overrides.installmentCount ?? (sameMethod ? item.installmentCount : null) : null,
+    date: overrides.date ?? (sameMethod ? item.scheduledDate : null),
+  };
+}
+
 export const updateTransactionSchema = z.object({
   profileId: z.string().min(1).optional(),
   type: z.enum(['income', 'expense']).optional(),

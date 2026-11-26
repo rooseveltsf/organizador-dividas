@@ -112,7 +112,7 @@ const protectedProfile = (pin = '0007') =>
 const unlock = async (id, pin = '0007', prefix = '') =>
   (await expectResponse('POST', prefix + '/profiles/' + id + '/session', { pin }, 200)).session;
 
-test('a migração mantém perfis e lançamentos existentes e começa sem PIN', () => {
+test('as migrações mantêm perfis e lançamentos existentes e começam sem PIN e com lista vazia', () => {
   const db = new DatabaseSync(':memory:');
   try {
     db.exec(`
@@ -123,11 +123,14 @@ test('a migração mantém perfis e lançamentos existentes e começa sem PIN', 
     `);
     db.exec(readFileSync(join(__dirname,
       '../apps/api/prisma/migrations/20261125000000_add_profile_pin/migration.sql'), 'utf8'));
+    db.exec(readFileSync(join(__dirname,
+      '../apps/api/prisma/migrations/20261125120000_add_shopping_list/migration.sql'), 'utf8'));
     const existing = db.prepare('SELECT * FROM profiles').get();
     assert.equal(existing.id, 'existente');
     assert.equal(existing.pinHash, null);
     assert.equal(existing.pinAttempts, 0);
     assert.equal(db.prepare('SELECT profileId FROM transactions').get().profileId, 'existente');
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM shopping_items').get().count, 0);
   } finally {
     db.close();
   }

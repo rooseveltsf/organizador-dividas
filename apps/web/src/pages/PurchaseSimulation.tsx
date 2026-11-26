@@ -1,66 +1,58 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { calendarDay, calendarMonthRange, collectPurchaseSeries, MAX_SERIES_LENGTH, simulateMonthlyPurchase, type MonthlyPurchase,
-  type MonthlyPurchaseRow, type RecurrenceAssumption, type Transaction } from '@organizador/shared';
+  type MonthlyPurchaseRow, type RecurrenceAssumption, type ShoppingItem, type Transaction } from '@organizador/shared';
 import { formatDate, monthLabel } from '../calendar';
 import { formatCurrencyCents } from '../components/MonthlySummary';
-import { NotebookHeader } from '../components/NotebookHeader';
+import { NotebookProfileHeader } from '../components/NotebookHeader';
 import { NotebookViews, type NotebookView } from '../components/NotebookViews';
-import { ProfileSecurityActions } from '../components/ProfilePin';
 import { PurchaseRecurrenceFields, PurchaseSeriesDetails } from '../components/PurchaseSeriesDetails';
 import { Button, Input, Select } from '../components/ui';
 import { useProfiles, useTransactions } from '../contexts';
+import { moneyPattern, parseMoneyInput } from '../moneyInput';
+import { shoppingListPath } from '../shoppingList';
 
 const loadError = 'Não foi possível carregar os lançamentos deste perfil.';
-const moneyPattern = '[0-9]+([,.][0-9]{1,2})?';
-const money = (value: string) => new RegExp('^' + moneyPattern + '$').test(value.trim()) ? Number(value.trim().replace(',', '.')) : NaN;
 type OpenTransaction = (tx: Pick<Transaction, 'id' | 'date'>) => void;
 
-export function PurchaseSimulationPage({ onViewChange, onOpenTransaction }: {
+export function PurchaseSimulationPage({ onViewChange, onOpenTransaction, item }: {
   onViewChange: (view: NotebookView) => void;
   onOpenTransaction: OpenTransaction;
+  item: ShoppingItem | null;
 }) {
-  const { activeProfile, profiles, selectProfile } = useProfiles();
+  const { activeProfile } = useProfiles();
   const heading = useRef<HTMLHeadingElement>(null);
   useLayoutEffect(() => { heading.current?.focus(); }, []);
 
   if (!activeProfile) return null;
   return (
     <main className="notebook-page dashboard purchase-page">
-      <NotebookHeader>
-        <span className="profile-monogram mini" aria-hidden="true">{activeProfile.avatarInitials}</span>
-        <div className="commitments-profile">
-          <Select aria-label="Perfil" size="lg" value={activeProfile.id} onChange={event => {
-            const profile = profiles.find(item => item.id === event.target.value);
-            if (profile) selectProfile(profile);
-          }}>
-            {profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-          </Select>
-        </div>
-        <ProfileSecurityActions />
-      </NotebookHeader>
+      <NotebookProfileHeader />
       <NotebookViews current="purchase" onChange={onViewChange} />
       <header className="commitments-heading">
         <h1 ref={heading} tabIndex={-1}>Simular compra</h1>
         <p>Veja quanto sobra por mês e em quais meses a compra aperta o orçamento.</p>
       </header>
-      <SimulationForm key={activeProfile.id} profileId={activeProfile.id} onOpenTransaction={onOpenTransaction} />
+      <SimulationForm key={item?.id ?? activeProfile.id} profileId={activeProfile.id} item={item}
+        onOpenTransaction={onOpenTransaction} onReset={() => onViewChange('purchase')} />
     </main>
   );
 }
 
-function SimulationForm({ profileId, onOpenTransaction }: { profileId: string; onOpenTransaction: OpenTransaction }) {
+function SimulationForm({ profileId, item, onOpenTransaction, onReset }: {
+  profileId: string; item: ShoppingItem | null; onOpenTransaction: OpenTransaction; onReset: () => void;
+}) {
   const { requestProfileApi } = useProfiles();
   const { pendingRows } = useTransactions();
   const awaitingWrites = pendingRows.size > 0;
-  const [rows, setRows] = useState<Transaction[] | 'error' | null>(null);
+  const [rows, setRows] = useState<Transaction[] | 'error' | 'closed' | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [today] = useState(() => calendarDay(new Date()));
-  const [product, setProduct] = useState('');
-  const [total, setTotal] = useState('');
-  const [payment, setPayment] = useState('cash');
-  const [paymentDate, setPaymentDate] = useState(today);
-  const [firstDue, setFirstDue] = useState(today);
-  const [count, setCount] = useState('2');
+  const [product, setProduct] = useState(item?.name ?? '');
+  const [total, setTotal] = useState(item?.estimatedAmount?.toString() ?? '');
+  const [payment, setPayment] = useState<string>(item ? item.paymentMethod ?? '' : 'cash');
+  const [paymentDate, setPaymentDate] = useState(item ? (item.paymentMethod === 'cash' ? item.scheduledDate ?? '' : '') : today);
+  const [firstDue, setFirstDue] = useState(item ? (item.paymentMethod === 'installments' ? item.scheduledDate ?? '' : '') : today);
+  const [count, setCount] = useState(item ? item.installmentCount?.toString() ?? '' : '2');
   const [margin, setMargin] = useState('');
   const [assumptions, setAssumptions] = useState<ReadonlyMap<string, RecurrenceAssumption>>(new Map());
   const parcelled = payment === 'installments';
@@ -74,6 +66,17 @@ function SimulationForm({ profileId, onOpenTransaction }: { profileId: string; o
       try {
         const data = await requestProfileApi<Transaction[]>('/transactions?' + query, loadError, { signal: controller.signal });
         if (!Array.isArray(data)) throw new Error(loadError);
+        if (item) {
+          // Consulte o item depois do Extrato para evitar reaplicar uma compra já registrada.
+          const current = await requestProfileApi<ShoppingItem>(
+            shoppingListPath(profileId, item.id), loadError, { signal: controller.signal },
+          );
+          if (!current) throw new Error(loadError);
+          if (current.purchasedAt || current.archivedAt) {
+            if (!controller.signal.aborted) setRows('closed');
+            return;
+          }
+        }
         if (!controller.signal.aborted) setRows(data.filter(tx => tx.profileId === profileId));
       } catch {
         if (!controller.signal.aborted) setRows('error');
@@ -81,16 +84,23 @@ function SimulationForm({ profileId, onOpenTransaction }: { profileId: string; o
     }
     void load();
     return () => controller.abort();
-  }, [profileId, awaitingWrites, attempt, requestProfileApi]);
+  }, [profileId, item, awaitingWrites, attempt, requestProfileApi]);
 
-  const result = useMemo(() => !awaitingWrites && Array.isArray(rows) && simulateMonthlyPurchase({ profileId, today,
-    total: money(total), firstDue: parcelled ? firstDue : paymentDate, installments: parcelled ? Number(count) : 1,
-    margin: money(margin), recurrenceAssumptions: assumptions,
-  }, rows), [awaitingWrites, rows, profileId, today, total, parcelled, firstDue, paymentDate, count, margin, assumptions]);
+  const result = useMemo(() => !awaitingWrites && payment && Array.isArray(rows) && simulateMonthlyPurchase({ profileId, today,
+    total: parseMoneyInput(total), firstDue: parcelled ? firstDue : paymentDate, installments: parcelled ? Number(count) : 1,
+    margin: parseMoneyInput(margin), recurrenceAssumptions: assumptions,
+  }, rows), [awaitingWrites, rows, profileId, today, total, payment, parcelled, firstDue, paymentDate, count, margin, assumptions]);
   const recurrences = useMemo(() => result && Array.isArray(rows)
     ? collectPurchaseSeries(profileId, rows, today, calendarMonthRange(result.rows[result.rows.length - 1].month).lte.toISOString().slice(0, 10))
       .filter(series => series.kind === 'recurrence') : [],
   [profileId, rows, today, result]);
+
+  if (rows === 'closed') return (
+    <div className="commitments-empty">
+      <p role="status">O item já foi concluído ou arquivado na Lista de compras.</p>
+      <Button variant="outline" onClick={onReset}>Nova simulação</Button>
+    </div>
+  );
 
   return (
     <>
@@ -99,7 +109,8 @@ function SimulationForm({ profileId, onOpenTransaction }: { profileId: string; o
           <Input label="Nome do produto (opcional)" name="product" value={product} onChange={event => setProduct(event.target.value)} />
           <Input label="Valor total da oferta (R$)" name="total" required inputMode="decimal" pattern={moneyPattern} value={total}
             onChange={event => setTotal(event.target.value)} hint={parcelled ? 'Informe o total real da oferta parcelada, incluindo juros ou acréscimos.' : undefined} />
-          <Select label="Forma de pagamento" name="payment" value={payment} onChange={event => setPayment(event.target.value)}>
+          <Select label="Forma de pagamento" name="payment" required value={payment} onChange={event => setPayment(event.target.value)}>
+            {item && <option value="" disabled>Selecione</option>}
             <option value="cash">À vista</option>
             <option value="installments">Parcelada</option>
           </Select>
@@ -107,7 +118,7 @@ function SimulationForm({ profileId, onOpenTransaction }: { profileId: string; o
             <Input label="Quantidade de parcelas" name="count" type="number" required min="1" max={MAX_SERIES_LENGTH} step="1" value={count}
               onChange={event => setCount(event.target.value)} />
             <Input label="Primeiro vencimento" name="firstDue" type="date" required min={today} value={firstDue} onChange={event => setFirstDue(event.target.value)} />
-          </> : <Input label="Data do pagamento" name="paymentDate" type="date" required min={today} value={paymentDate}
+          </> : payment === 'cash' && <Input label="Data do pagamento" name="paymentDate" type="date" required min={today} value={paymentDate}
             onChange={event => setPaymentDate(event.target.value)} />}
         </div>
         <details className="purchase-details">
@@ -127,7 +138,7 @@ function SimulationForm({ profileId, onOpenTransaction }: { profileId: string; o
         <Button variant="outline" onClick={() => { setRows(null); setAttempt(previous => previous + 1); }}>Tentar novamente</Button>
       </div>}
       {!result && Array.isArray(rows) && !awaitingWrites && <p className="purchase-results" role="status">
-        {total ? 'Confira o valor total, a quantidade de parcelas e a data. Cada parcela precisa valer pelo menos R$ 0,01.'
+        {total ? 'Confira o valor total, a forma de pagamento e a data. Cada parcela precisa valer pelo menos R$ 0,01.'
           : 'Informe o valor total da oferta para ver a comparação mensal.'}</p>}
       {result && <MonthlyResult result={result} product={product.trim()} onOpenTransaction={onOpenTransaction} />}
     </>

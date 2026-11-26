@@ -405,6 +405,20 @@ dialog.notebook-dialog::backdrop { background: transparent; }
 .purchase-form { display: grid; gap: 1.25rem; }
 .purchase-fields { display: grid; gap: 1rem; }
 .purchase-fields { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
+.shopping-heading, .shopping-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.shopping-heading { justify-content: space-between; gap: 1rem; }
+.shopping-section { margin-block: 1.6rem; }
+.shopping-section h2 { margin-bottom: .75rem; font: 400 clamp(1.55rem, 3.4vw, 2.35rem)/1.12 var(--fonts-heading); }
+.shopping-items { list-style: none; padding: 0; border-top: 1px solid var(--colors-slate-300); }
+.shopping-item { display: grid; gap: .65rem; padding: .9rem .6rem; border-bottom: 1px solid var(--colors-slate-200); overflow-wrap: anywhere; }
+.shopping-item h3 { font-size: 1.075rem; font-weight: 650; }
+.shopping-item p, .shopping-conditions { color: var(--colors-slate-600); font-size: .875rem; }
+.shopping-item .shopping-actions:empty { display: none; }
+.shopping-form, .shopping-form fieldset { display: grid; gap: .9rem; min-width: 0; }
+.shopping-form fieldset { margin: 0; padding: 0; border: 0; }
+.shopping-actions button { min-height: 44px; }
+.shopping-dialog-actions { justify-content: flex-end; }
+.shopping-message { margin-block: .75rem; }
 .purchase-details { border-top: 1px solid var(--colors-slate-200); padding-top: .55rem; }
 .purchase-details summary { cursor: pointer; padding-block: .5rem; font-weight: 600; }
 .purchase-details p, .purchase-adjustments li p { color: var(--colors-slate-600); font-size: .86rem; }

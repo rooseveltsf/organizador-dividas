@@ -138,6 +138,12 @@ Informe o total real da oferta, a forma de pagamento e as datas da compra. O nom
 - O parcelamento segue a distribuição de centavos e o calendário do cadastro. A tela destaca o menor resultado, o primeiro mês negativo e os valores abaixo de uma margem opcional. Quando faltam dados no horizonte, os destaques priorizam os meses com cobertura.
 - A seção de encerramentos mostra quando parcelas conhecidas deixam de pesar na projeção e permite consultar os registros no Extrato. O fim dos lançamentos de uma recorrência sinaliza cobertura insuficiente nos meses seguintes. As premissas opcionais de fim ou continuidade aparecem separadas dos valores cadastrados.
 
+### 7. Lista de compras
+
+Cadastre os itens no perfil, com preço estimado e condições de pagamento opcionais. **Abrir na Calculadora** preenche uma simulação com os dados do item.
+
+**Marcar como comprado** usa as condições preenchidas ou pede os dados necessários. Use **Corrigir valor e concluir** para registrar um preço real diferente da estimativa. A compra à vista entra como paga e as parcelas entram como pendentes. **Ver no Extrato** abre o lançamento vinculado. Arquivar preserva os lançamentos da compra.
+
 ---
 
 ## 📁 Estrutura de Diretórios
@@ -219,7 +225,7 @@ organizador-dividas/
    ```bash
    npm exec -w @organizador/api -- prisma db push
    ```
-   O SQLite local distribuído com o projeto já contém tabelas e usa esse comando para atualizar o esquema. Em um banco que já acompanha o histórico do Prisma, aplique a migração `20261125000000_add_profile_pin` com `npm exec -w @organizador/api -- prisma migrate deploy`.
+   O SQLite local distribuído com o projeto já contém tabelas e usa esse comando para atualizar o esquema. Em um banco que já acompanha o histórico do Prisma, aplique as migrações pendentes com `npm exec -w @organizador/api -- prisma migrate deploy`.
    *(Opcional)* Para abrir a interface visual do banco de dados:
    ```bash
    npm run prisma:studio -w @organizador/api

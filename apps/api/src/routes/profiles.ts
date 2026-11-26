@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { ProfileController } from '../controllers/profileController';
 import { authorizeProfile } from '../profileAccess';
+import shoppingListRouter from './shoppingList';
 
 const router = Router();
 
@@ -18,6 +19,7 @@ profile.put('/', ProfileController.update);
 profile.delete('/', ProfileController.delete);
 profile.get('/session', ProfileController.status);
 profile.put('/pin', ProfileController.updatePin);
+profile.use('/shopping-list', shoppingListRouter);
 
 export default router;
 

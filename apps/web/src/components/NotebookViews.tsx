@@ -1,10 +1,11 @@
-import { Calculator, CalendarDays, List } from 'lucide-react';
+import { Calculator, CalendarDays, List, ShoppingBasket } from 'lucide-react';
 
-export type NotebookView = 'statement' | 'future' | 'purchase';
+export type NotebookView = 'statement' | 'future' | 'purchase' | 'shopping';
 
 const views = [
   { key: 'statement', label: 'Extrato', Icon: List },
   { key: 'future', label: 'Compromissos futuros', Icon: CalendarDays },
+  { key: 'shopping', label: 'Lista de compras', Icon: ShoppingBasket },
   { key: 'purchase', label: 'Simular compra', Icon: Calculator },
 ] as const;
 

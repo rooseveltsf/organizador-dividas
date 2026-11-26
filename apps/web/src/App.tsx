@@ -3,9 +3,10 @@ import { ProfileProvider, useProfiles, TransactionProvider, useTransactions } fr
 import { Dashboard, ProfileSelectScreen } from './pages';
 import { FutureCommitments } from './pages/FutureCommitments';
 import { PurchaseSimulationPage } from './pages/PurchaseSimulation';
+import { ShoppingList } from './pages/ShoppingList';
 import type { NotebookView } from './components/NotebookViews';
 import { firstFutureMonth } from './calendar';
-import type { Transaction } from '@organizador/shared';
+import type { ShoppingItem, Transaction } from '@organizador/shared';
 
 function MainApp() {
   const { activeProfile, selectionVersion } = useProfiles();
@@ -19,12 +20,13 @@ function MainApp() {
   }
 
   return (
-    <ProfileWorkspace key={selectionVersion}
+    <ProfileWorkspace key={selectionVersion} profileId={activeProfile.id}
       {...{ profileNotice, setProfileNotice, view, setView, futureMonth, setFutureMonth }} />
   );
 }
 
-function ProfileWorkspace({ profileNotice, setProfileNotice, view, setView, futureMonth, setFutureMonth }: {
+function ProfileWorkspace({ profileId, profileNotice, setProfileNotice, view, setView, futureMonth, setFutureMonth }: {
+  profileId: string;
   profileNotice: string;
   setProfileNotice: Dispatch<SetStateAction<string>>;
   view: NotebookView;
@@ -34,16 +36,19 @@ function ProfileWorkspace({ profileNotice, setProfileNotice, view, setView, futu
 }) {
   const { setSelectedDate } = useTransactions();
   const [transactionTarget, setTransactionTarget] = useState<string | null>(null);
+  const [simulationItem, setSimulationItem] = useState<ShoppingItem | null>(null);
 
   function openTransaction(tx: Pick<Transaction, 'id' | 'date'>) {
     setSelectedDate(Number(tx.date.slice(5, 7)), Number(tx.date.slice(0, 4)));
     setTransactionTarget(tx.id);
+    setSimulationItem(null);
     setView('statement');
   }
 
   function changeView(next: NotebookView) {
     setProfileNotice('');
     setTransactionTarget(null);
+    setSimulationItem(null);
     setView(next);
   }
 
@@ -51,7 +56,12 @@ function ProfileWorkspace({ profileNotice, setProfileNotice, view, setView, futu
     return <FutureCommitments month={futureMonth} onMonthChange={setFutureMonth}
       onViewChange={changeView} onOpenTransaction={openTransaction} />;
   }
-  if (view === 'purchase') return <PurchaseSimulationPage onViewChange={changeView} onOpenTransaction={openTransaction} />;
+  if (view === 'purchase') return <PurchaseSimulationPage item={simulationItem} onViewChange={changeView} onOpenTransaction={openTransaction} />;
+  if (view === 'shopping') return <ShoppingList profileId={profileId} onViewChange={changeView} onOpenTransaction={openTransaction}
+    onSimulate={item => {
+      changeView('purchase');
+      setSimulationItem(item);
+    }} />;
 
   return (
     <Dashboard entryNotice={profileNotice} onProfileSwitch={() => {

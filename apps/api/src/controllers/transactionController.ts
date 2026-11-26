@@ -1,21 +1,17 @@
 import { Request, Response } from 'express';
-import { randomUUID } from 'node:crypto';
+import { buildTransactionRecords } from '../transactionRecords';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../prisma';
 import { profileAccessFilter, ProfileAccessError, requireProfileAccess, respondProfileError } from '../profileAccess';
 import {
   ApiResponse,
-  CreateTransactionInput,
   PaymentStatus,
   TransactionType,
   TransactionCategory,
-  addMonths,
   calendarDateSchema,
   calendarDay,
   calendarMonthRange,
-  installmentCents,
   parseCalendarDate,
-  toCents,
   transactionCount,
   createTransactionSchema,
   updateTransactionSchema,
@@ -24,44 +20,6 @@ import {
 } from '@organizador/shared';
 
 export { addMonths, parseCalendarDate as parseLocalDate } from '@organizador/shared';
-
-function buildRecords(
-  profileId: string,
-  item: Omit<CreateTransactionInput, 'profileId' | 'repeatMonths'>,
-  repeatMonths: number,
-  groupSingleRecurrence: boolean,
-) {
-  const baseDate = parseCalendarDate(item.date);
-  const count = transactionCount(item, repeatMonths);
-  const installment = item.category === 'installment';
-  const groupedRecurrence = (item.category === 'fixed' || item.category === 'recurring') &&
-    (count > 1 || groupSingleRecurrence);
-  const groupId = installment || groupedRecurrence ? item.groupId || randomUUID() : item.groupId ?? null;
-  const first = item.currentInstallment ?? 1;
-  const total = item.totalInstallments ?? 1;
-  const purchaseCents = item.amountMode === 'total' ? toCents(item.amount) : null;
-
-  return Array.from({ length: count }, (_, index) => {
-    const date = addMonths(baseDate, index);
-    const number = first + index;
-    const status = index === 0 ? item.status : 'pending';
-
-    return {
-      id: randomUUID(),
-      profileId,
-      type: item.type,
-      category: item.category,
-      amount: purchaseCents === null ? item.amount : installmentCents(purchaseCents, total, number) / 100,
-      description: item.description,
-      date,
-      currentInstallment: installment ? number : groupedRecurrence ? null : item.currentInstallment ?? null,
-      totalInstallments: installment ? total : groupedRecurrence ? null : item.totalInstallments ?? null,
-      groupId,
-      status,
-      paymentDate: status === 'paid' ? (item.paymentDate ? parseCalendarDate(item.paymentDate) : date) : null,
-    };
-  });
-}
 
 export class TransactionController {
   /**
@@ -190,7 +148,7 @@ export class TransactionController {
 
       const payload = parseResult.data;
 
-      const items = buildRecords(payload.profileId, payload, payload.repeatMonths, true);
+      const items = buildTransactionRecords(payload.profileId, payload, payload.repeatMonths, true);
       if (payload.category !== 'daily') {
         await prisma.$transaction(async db => {
           await requireProfileAccess(req, payload.profileId, db);
@@ -250,7 +208,7 @@ export class TransactionController {
       const payload = parseResult.data;
 
       const recordsToCreate = payload.transactions.flatMap(item =>
-        buildRecords(payload.profileId, item, payload.repeatMonths ?? item.repeatMonths ?? 1, false)
+        buildTransactionRecords(payload.profileId, item, payload.repeatMonths ?? item.repeatMonths ?? 1, false)
       );
 
       await prisma.$transaction(async db => {

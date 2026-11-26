@@ -1,8 +1,10 @@
 import { createContext, useContext, useState, useLayoutEffect, useMemo, useRef, useCallback, type ReactNode } from 'react';
-import type { Transaction, CreateTransactionDTO, UpdateTransactionInput, PaymentStatus } from '@organizador/shared';
+import type { Transaction, CreateTransactionDTO, UpdateTransactionInput, PaymentStatus,
+  ShoppingItem, ShoppingPurchaseOverrides } from '@organizador/shared';
 import { useProfiles } from './ProfileContext';
+import { shoppingListPath } from '../shoppingList';
 
-type RowOperation = 'save' | 'status' | 'delete';
+type RowOperation = 'save' | 'status' | 'delete' | 'purchase';
 type PendingRow = { profileId: string | undefined; operation: RowOperation };
 type MonthScope = { profileId: string; month: number; year: number };
 type MonthData = {
@@ -27,6 +29,7 @@ export interface TransactionContextData {
   setSelectedDate: (month: number, year: number) => void;
   fetchTransactions: (month?: number, year?: number) => Promise<void>;
   refreshTransactions: (profileId: string) => Promise<void>;
+  completeShoppingItem: (id: string, overrides?: ShoppingPurchaseOverrides) => Promise<ShoppingItem>;
   addTransaction: (data: CreateTransactionDTO) => Promise<void>;
   updateTransaction: (id: string, data: UpdateTransactionInput) => Promise<void>;
   toggleTransactionStatus: (id: string, newStatus?: PaymentStatus) => Promise<void>;
@@ -148,20 +151,40 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
     if (target?.profileId === affectedProfileId) await loadMonth(target);
   }, [loadMonth]);
 
-  async function mutateRow(id: string, operation: RowOperation, send: () => Promise<unknown>, destinationProfileId?: string) {
+  async function mutateRow<T>(id: string, operation: RowOperation, send: () => Promise<T>, destinationProfileId?: string) {
     if (rowOperations.current.has(id)) throw new Error('Há uma alteração em andamento neste lançamento.');
     rowOperations.current.set(id, { profileId, operation });
     setOperations(new Map(rowOperations.current));
     try {
-      await send();
+      const result = await send();
       const visibleProfileId = activeScope.current?.profileId;
       if (visibleProfileId && (visibleProfileId === profileId || visibleProfileId === destinationProfileId)) {
         await refreshTransactions(visibleProfileId);
       }
+      return result;
     } finally {
       rowOperations.current.delete(id);
       setOperations(new Map(rowOperations.current));
     }
+  }
+
+  async function completeShoppingItem(id: string, overrides: ShoppingPurchaseOverrides = {}) {
+    if (!profileId) throw new Error('Selecione um perfil para concluir esta compra.');
+    const errorMessage = 'Não foi possível concluir a compra. Tente novamente.';
+    return mutateRow(id, 'purchase', async () => {
+      try {
+        const item = await requestProfileApi<ShoppingItem>(shoppingListPath(profileId, id) + '/complete', errorMessage, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(overrides),
+        });
+        if (!item?.purchasedAt) throw new Error(errorMessage);
+        return item;
+      } catch (error) {
+        await refreshTransactions(profileId);
+        throw error;
+      }
+    });
   }
 
   async function addTransaction(data: CreateTransactionDTO) {
@@ -176,7 +199,7 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
   }
 
   function updateTransaction(id: string, data: UpdateTransactionInput) {
-    return mutateRow(id, 'save', () => requestProfileApi(
+    return mutateRow(id, 'save', () => requestProfileApi<void>(
       '/transactions/' + encodeURIComponent(id), 'Não foi possível salvar as alterações. Tente novamente.', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -186,7 +209,7 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
   }
 
   function toggleTransactionStatus(id: string, newStatus?: PaymentStatus) {
-    return mutateRow(id, 'status', () => requestProfileApi(
+    return mutateRow(id, 'status', () => requestProfileApi<void>(
       '/transactions/' + encodeURIComponent(id) + '/status', 'Não foi possível alterar a situação do lançamento. Tente novamente.', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -197,7 +220,7 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
 
   function deleteTransaction(id: string, deleteAllGroup = false) {
     const query = deleteAllGroup ? '?deleteAll=true' : '';
-    return mutateRow(id, 'delete', () => requestProfileApi(
+    return mutateRow(id, 'delete', () => requestProfileApi<void>(
       '/transactions/' + encodeURIComponent(id) + query, 'Não foi possível excluir o lançamento. Tente novamente.',
       { method: 'DELETE' },
     ));
@@ -218,6 +241,7 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
         setSelectedDate,
         fetchTransactions,
         refreshTransactions,
+        completeShoppingItem,
         addTransaction,
         updateTransaction,
         toggleTransactionStatus,
